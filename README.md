@@ -5,6 +5,7 @@ An unofficial Android controller that pairs speakers the official apps won't:
 - **Stereo pairs of different Sonos models** (e.g. One + Era 100).
 - **Any speaker as a soundbar's surrounds or sub** (fronts are experimental and hidden by default).
 - **Volume, mute and play/pause for any brand's Wi-Fi speaker** that exposes a standard UPnP/DLNA MediaRenderer, plus the same controls for Sonos.
+- **Google Cast speakers, displays and groups** (Chromecast built-in, from any maker): volume, mute and playback. Groups and pairs made in Google Home are shown read-only.
 
 Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400). It needs no cloud account.
 
@@ -16,6 +17,7 @@ Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400)
 |---|---|
 | `:core` | Vendor-neutral models: brands, capabilities, `SpeakerSource`, `PlaybackControl`, `CommandPlan` (a bonding write must be `confirm()`ed before it can run), command log |
 | `:upnp-core` | SSDP discovery, SOAP envelopes, the XML helper, OkHttp transport, a LAN-only guard, the DLNA renderer client (`dlna/`), fake renderers (`demo/`) |
+| `:cast-core` | CASTV2 over TLS (hand-written protobuf frames, JSON namespaces): receiver volume/mute, media play/pause/next, `FakeCastHousehold` |
 | `:sonos-core` | Topology parser, bond roles, pair/home-theater planners and rules, snapshots and restore, `FakeSonosHousehold` |
 | `:cli` | Desktop tool for checking every command against real speakers before using the app |
 | `:app` | Jetpack Compose app (minSdk 26) |
@@ -25,7 +27,7 @@ The protocol modules are plain Kotlin/JVM with no Android dependencies.
 ## Build
 
 ```bash
-./gradlew test                 # 41 protocol tests
+./gradlew test                 # 52 protocol tests
 ./gradlew :app:assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :cli:installDist     # cli/build/install/tugma/bin/tugma
 ```
@@ -61,7 +63,14 @@ cli/build/install/tugma/bin/tugma renderer-volume http://192.168.1.50:49152/desc
 ```
 `renderers` lists each device's description URL. A speaker that doesn't appear there has no standard renderer. It may only offer Cast, AirPlay or its own app protocol.
 
-`--demo` runs any command against the built-in fakes: Sonos at `192.168.50.11`–`19`, DLNA at `192.168.50.31`–`34`.
+**Google Cast** (by IP; groups use their own port, which the app finds over mDNS):
+```bash
+cli/build/install/tugma/bin/tugma cast-status 192.168.1.40
+cli/build/install/tugma/bin/tugma cast-volume 192.168.1.40 30
+cli/build/install/tugma/bin/tugma cast-pause 192.168.1.40
+```
+
+`--demo` runs any command against the built-in fakes: Sonos at `192.168.50.11`–`19`, DLNA at `192.168.50.31`–`34`, Cast at `192.168.50.41`–`43` (plus a group at `192.168.50.41:32187`).
 
 In the app, the **Debug** tab logs every request and response and can share them as text. **Snapshots** saves the topology before every change and suggests an undo.
 
@@ -82,6 +91,12 @@ In the app, the **Debug** tab logs every request and response and can share them
   - `AVTransport`: `GetTransportInfo`, `GetPositionInfo`, `Play`, `Pause`, `Stop`, `Next`, `Previous`.
   - On Sonos, volume goes to the speaker itself and transport goes to its group coordinator.
   - These controls don't need confirmation, because they can't change how speakers are bonded.
+- **Google Cast:**
+  - Connection: CASTV2 on TLS port 8009 (groups use their own port), framed as a 4-byte length plus a `CastMessage` protobuf.
+  - Namespaces: `tp.connection` CONNECT, `tp.heartbeat` PING/PONG, `receiver` GET_STATUS/SET_VOLUME (level 0–1, muted), `media` GET_STATUS/PLAY/PAUSE/STOP/QUEUE_UPDATE on the casting app's `transportId`.
+  - Certificates: Cast devices use certificates no public CA signs, so they aren't verified. Connections are therefore refused for anything but private-network addresses.
+  - Limits: apps without the standard media namespace allow volume changes but not playback control. Google exposes no local API for creating groups or stereo pairs.
+  - Discovery: the app browses mDNS `_googlecast._tcp` with `NsdManager` and reads TXT `id`/`fn`/`md`/`rs`.
 
 ## Licence
 

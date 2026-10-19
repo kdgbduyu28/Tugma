@@ -19,5 +19,6 @@ rootProject.name = "tugma"
 include(":core")
 include(":upnp-core")
 include(":sonos-core")
+include(":cast-core")
 include(":cli")
 include(":app")

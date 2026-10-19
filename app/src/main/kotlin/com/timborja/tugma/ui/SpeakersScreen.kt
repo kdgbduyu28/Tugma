@@ -52,6 +52,7 @@ import androidx.lifecycle.viewModelScope
 import com.timborja.tugma.AppContainer
 import com.timborja.tugma.core.Brand
 import com.timborja.tugma.core.Capability
+import com.timborja.tugma.core.SpeakerSource
 import com.timborja.tugma.core.SpeakerSummary
 import com.timborja.tugma.sonos.BondRole
 import com.timborja.tugma.sonos.HouseholdState
@@ -63,7 +64,8 @@ import kotlinx.coroutines.launch
 
 class SpeakersViewModel(c: AppContainer) : PlanViewModel(c) {
     val onLan = c.network.onLan.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), c.network.isOnLanNow())
-    val dlna = c.dlna.summaries
+    /** Every non-Sonos brand; each gets its own section in the list. */
+    val others: List<SpeakerSource> = c.sources.filter { it.brand != Brand.SONOS }
 
     /** Brand chip selection; null shows every brand. */
     var filter by mutableStateOf<Brand?>(null)
@@ -110,20 +112,17 @@ fun SpeakersScreen(
 ) {
     val vm = containerViewModel { SpeakersViewModel(it) }
     val ui by vm.household.collectAsState()
-    val dlna by vm.dlna.collectAsState()
+    val others = vm.others.map { it.brand to it.summaries.collectAsState().value }
     val onLan by vm.onLan.collectAsState()
     val demo by vm.demo.collectAsState()
     var addHost by remember { mutableStateOf(false) }
 
     val h = ui.household
-    val counts = mapOf(
-        Brand.SONOS to (h?.speakers?.count { !it.invisible } ?: 0),
-        Brand.UPNP to dlna.speakers.size,
-    ).filterValues { it > 0 }
+    val counts = (mapOf(Brand.SONOS to (h?.speakers?.count { !it.invisible } ?: 0)) + others.associate { (b, st) -> b to st.speakers.size })
+        .filterValues { it > 0 }
     val showSonos = vm.filter == null || vm.filter == Brand.SONOS
-    val showDlna = vm.filter == null || vm.filter == Brand.UPNP
-    val loading = ui.loading || dlna.loading
-    val nothingFound = counts.isEmpty() && ui.loadedOnce && dlna.loadedOnce && !loading
+    val loading = ui.loading || others.any { it.second.loading }
+    val nothingFound = counts.isEmpty() && ui.loadedOnce && others.all { it.second.loadedOnce } && !loading
 
     ScreenScaffold(
         title = "Tugma",
@@ -195,16 +194,14 @@ fun SpeakersScreen(
                     }
                 }
 
-                if (showDlna && dlna.speakers.isNotEmpty()) {
-                    item { SectionLabel("Other Wi-Fi speakers · UPnP/DLNA") }
-                    item {
-                        Text(
-                            "Volume and playback only. These makers don't expose pairing over the network.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                others.forEach { (brand, st) ->
+                    if ((vm.filter == null || vm.filter == brand) && st.speakers.isNotEmpty()) {
+                        item(key = "label-$brand") { SectionLabel(sectionTitle(brand)) }
+                        item(key = "note-$brand") {
+                            Text(sectionNote(brand), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        items(st.speakers, key = { "$brand-" + it.id }) { s -> SummaryCard(s, onOpen = { onOpen(brand, s.id) }) }
                     }
-                    items(dlna.speakers, key = { "dlna-" + it.id }) { s -> DlnaCard(s, onOpen = { onOpen(Brand.UPNP, s.id) }) }
                 }
 
                 if (nothingFound) {
@@ -235,7 +232,7 @@ fun SpeakersScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DlnaCard(s: SpeakerSummary, onOpen: () -> Unit) {
+private fun SummaryCard(s: SpeakerSummary, onOpen: () -> Unit) {
     Card(onClick = onOpen, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -247,8 +244,21 @@ private fun DlnaCard(s: SpeakerSummary, onOpen: () -> Unit) {
                 if (s.model.isNotBlank()) Badge(s.model)
                 capabilityLabels(s.capabilities).forEach { Badge(it, MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onSurface) }
             }
+            s.roleLabel?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         }
     }
+}
+
+private fun sectionTitle(brand: Brand): String = when (brand) {
+    Brand.UPNP -> "Other Wi-Fi speakers · UPnP/DLNA"
+    Brand.CAST -> "Google Cast"
+    else -> brand.displayName
+}
+
+private fun sectionNote(brand: Brand): String = when (brand) {
+    Brand.UPNP -> "Volume and playback only. These makers don't expose pairing over the network."
+    Brand.CAST -> "Speakers and displays with Chromecast built-in. Volume and playback only; groups and stereo pairs can only be made in Google Home."
+    else -> ""
 }
 
 fun capabilityLabels(caps: Set<Capability>): List<String> = buildList {

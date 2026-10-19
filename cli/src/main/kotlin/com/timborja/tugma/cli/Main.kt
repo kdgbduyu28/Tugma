@@ -22,6 +22,11 @@ import com.timborja.tugma.upnp.OkHttpTransport
 import com.timborja.tugma.upnp.SoapCall
 import com.timborja.tugma.upnp.SoapClient
 import com.timborja.tugma.upnp.SsdpDiscoverer
+import com.timborja.tugma.cast.CastClient
+import com.timborja.tugma.cast.CastDevice
+import com.timborja.tugma.cast.CastPlayback
+import com.timborja.tugma.cast.TlsCastConnector
+import com.timborja.tugma.cast.demo.FakeCastHousehold
 import com.timborja.tugma.upnp.demo.FakeDlnaHousehold
 import com.timborja.tugma.upnp.dlna.DlnaClient
 import com.timborja.tugma.upnp.dlna.UpnpServices
@@ -45,6 +50,12 @@ Other brands (UPnP/DLNA MediaRenderers):
   renderer-status <location-url>   volume, mute, transport and track via RenderingControl/AVTransport
   renderer-volume <location-url> <n>   set volume (no confirmation: it doesn't change any setup)
 
+Google Cast (by IP; port defaults to 8009, groups use their own port, e.g. 192.168.1.40:32187):
+  cast-status <ip[:port]>          receiver volume, running app and media state
+  cast-volume <ip[:port]> <0-100>
+  cast-mute <ip[:port]> on|off
+  cast-play|cast-pause|cast-stop <ip[:port]>
+
 Writes (each one shows the exact SOAP and asks you to type "yes"):
   pair <left-ip> <right-ip>
   unpair <ip>
@@ -56,7 +67,7 @@ Options:
   --dry-run    print the plan, send nothing
   --force      let rule violations through (still asks for confirmation)
   --verbose    print every HTTP request and response
-  --demo       use the built-in fake household (Sonos 192.168.50.11-19, DLNA 192.168.50.31-34)"""
+  --demo       use the built-in fakes (Sonos 192.168.50.11-19, DLNA .31-34, Cast .41-43 and group .41:32187)"""
 
 private class Args(raw: List<String>) {
     val flags = raw.filter { it.startsWith("--") && it !in valued }.toSet()
@@ -89,7 +100,8 @@ fun main(argv: Array<String>) {
     val household = SonosHousehold(client, discoverer)
     val dlnaClient = DlnaClient(dlnaTransport)
     val dlnaDiscoverer: Discoverer = fakeDlna ?: SsdpDiscoverer(UpnpServices.MEDIA_RENDERER_ST)
-    val cli = Cli(args, client, household, transport, dlnaClient, dlnaDiscoverer)
+    val castClient = CastClient(if (demo) FakeCastHousehold() else TlsCastConnector(), log)
+    val cli = Cli(args, client, household, transport, dlnaClient, dlnaDiscoverer, castClient)
 
     val code = try {
         runBlocking { cli.run(cmd, args.positional.drop(1)) }
@@ -109,6 +121,7 @@ private class Cli(
     private val transport: HttpTransport,
     private val dlna: DlnaClient,
     private val dlnaDiscoverer: Discoverer,
+    private val cast: CastClient,
 ) {
     private val dryRun = "--dry-run" in args.flags
     private val force = "--force" in args.flags
@@ -136,6 +149,12 @@ private class Cli(
         "renderers" -> renderers()
         "renderer-status" -> rendererStatus(rest)
         "renderer-volume" -> rendererVolume(rest)
+        "cast-status" -> castStatus(rest)
+        "cast-volume" -> castDo(rest) { setVolume(rest.getOrNull(1)?.toIntOrNull() ?: throw IllegalArgumentException("missing volume")) }
+        "cast-mute" -> castDo(rest) { setMuted(rest.getOrNull(1)?.lowercase() in setOf("on", "true", "1")) }
+        "cast-play" -> castDo(rest) { play() }
+        "cast-pause" -> castDo(rest) { pause() }
+        "cast-stop" -> castDo(rest) { stop() }
         else -> { println(USAGE); 2 }
     }
 
@@ -269,6 +288,25 @@ private class Cli(
         control.setVolume(v)
         println("${r.friendlyName}: volume now ${control.status().volume}")
         return 0
+    }
+
+    private fun castPlayback(rest: List<String>): CastPlayback {
+        val v = rest.getOrNull(0) ?: throw IllegalArgumentException("missing <ip>")
+        return CastPlayback(cast, v.substringBefore(':'), v.substringAfter(':', "").toIntOrNull() ?: CastDevice.DEFAULT_PORT)
+    }
+
+    private suspend fun castStatus(rest: List<String>): Int {
+        val p = castPlayback(rest)
+        val s = p.status()
+        println("volume ${s.volume ?: "?"}/100, muted ${s.muted ?: "?"}, ${s.transport}")
+        if (s.title != null || s.artist != null) println("  ${s.title ?: ""}${s.artist?.let { " — $it" } ?: ""}")
+        return 0
+    }
+
+    private suspend fun castDo(rest: List<String>, block: suspend CastPlayback.() -> Unit): Int {
+        val p = castPlayback(rest)
+        p.block()
+        return castStatus(rest)
     }
 
     private fun ask(): Boolean {

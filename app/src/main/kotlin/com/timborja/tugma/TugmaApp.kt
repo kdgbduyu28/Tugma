@@ -6,7 +6,10 @@ import com.timborja.tugma.core.Brand
 import com.timborja.tugma.core.CommandLog
 import com.timborja.tugma.core.InMemoryCommandLog
 import com.timborja.tugma.core.SpeakerSource
+import com.timborja.tugma.cast.TlsCastConnector
+import com.timborja.tugma.data.CastRepository
 import com.timborja.tugma.data.DlnaRepository
+import com.timborja.tugma.data.NsdCastDiscoverer
 import com.timborja.tugma.data.MulticastLockDiscoverer
 import com.timborja.tugma.data.NetworkMonitor
 import com.timborja.tugma.data.Settings
@@ -40,8 +43,15 @@ class AppContainer(context: Context) {
         realDiscoverer = MulticastLockDiscoverer(context, SsdpDiscoverer(UpnpServices.MEDIA_RENDERER_ST)),
     )
 
-    /** Every brand's speakers. New adapters (Cast, Linkplay…) get added here. */
-    val sources: List<SpeakerSource> = listOf(sonos, dlna)
+    val cast = CastRepository(
+        settings = settings,
+        log = log,
+        realConnector = TlsCastConnector(),
+        realDiscoverer = NsdCastDiscoverer(context),
+    )
+
+    /** Every brand's speakers. New adapters (Linkplay…) get added here. */
+    val sources: List<SpeakerSource> = listOf(sonos, dlna, cast)
 
     fun source(brand: Brand): SpeakerSource? = sources.firstOrNull { it.brand == brand }
 
@@ -50,11 +60,13 @@ class AppContainer(context: Context) {
         settings.setDemoMode(on)
         sonos.clear()
         dlna.clear()
+        cast.clear()
     }
 
     fun resetDemo() {
         sonos.resetDemo()
         dlna.resetDemo()
+        cast.resetDemo()
     }
 }
 

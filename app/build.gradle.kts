@@ -42,6 +42,7 @@ kotlin { jvmToolchain(17) }
 
 dependencies {
     implementation(project(":sonos-core"))
+    implementation(project(":cast-core"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

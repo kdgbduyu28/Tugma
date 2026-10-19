@@ -161,7 +161,7 @@ fun SpeakerDetailScreen(
                     IconButton(onClick = { vm.act("Stop") { stop() } }) { Icon(Icons.Filled.Stop, contentDescription = "Stop") }
                     IconButton(onClick = { vm.act("Next") { next() } }) { Icon(Icons.Filled.SkipNext, contentDescription = "Next") }
                 }
-                if (speaker.brand == Brand.SONOS) {
+                if (speaker.brand == Brand.SONOS || speaker.model == com.timborja.tugma.cast.CastDevice.GROUP_MODEL) {
                     Text(
                         "Playback controls the whole group this speaker belongs to.",
                         style = MaterialTheme.typography.bodySmall,
