@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Hand-built in the shape of a Sonos device_description.xml (UDN, roomName, displayName vendor fields). -->
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <specVersion><major>1</major><minor>0</minor></specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:ZonePlayer:1</deviceType>
+    <friendlyName>192.168.1.20 - Sonos Arc - RINCON_BAR000000001400</friendlyName>
+    <manufacturer>Sonos, Inc.</manufacturer>
+    <modelNumber>S19</modelNumber>
+    <modelName>Sonos Arc</modelName>
+    <softwareVersion>85.0-65020</softwareVersion>
+    <serialNum>48-A6-B8-00-00-00:A</serialNum>
+    <UDN>uuid:RINCON_BAR000000001400</UDN>
+    <roomName>Living Room</roomName>
+    <displayName>Arc</displayName>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:DeviceProperties:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:DeviceProperties</serviceId>
+        <controlURL>/DeviceProperties/Control</controlURL>
+        <eventSubURL>/DeviceProperties/Event</eventSubURL>
+        <SCPDURL>/xml/DeviceProperties1.xml</SCPDURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:ZoneGroupTopology:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:ZoneGroupTopology</serviceId>
+        <controlURL>/ZoneGroupTopology/Control</controlURL>
+        <eventSubURL>/ZoneGroupTopology/Event</eventSubURL>
+        <SCPDURL>/xml/ZoneGroupTopology1.xml</SCPDURL>
+      </service>
+    </serviceList>
+    <deviceList>
+      <device>
+        <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+        <serviceList>
+          <service>
+            <serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
+            <controlURL>/MediaRenderer/RenderingControl/Control</controlURL>
+            <SCPDURL>/xml/RenderingControl1.xml</SCPDURL>
+          </service>
+        </serviceList>
+      </device>
+    </deviceList>
+  </device>
+</root>

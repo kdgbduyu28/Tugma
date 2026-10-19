@@ -1,0 +1,26 @@
+<!-- From SoCo tests/test_core.py (MIT licence, https://github.com/SoCo/SoCo). -->
+<ZoneGroupState>
+  <ZoneGroups>
+    <ZoneGroup Coordinator="RINCON_00112233445501400" ID="RINCON_00112233445501400:1">
+      <ZoneGroupMember UUID="RINCON_00112233445501400"
+        Location="http://192.0.2.10:1400/xml/device_description.xml"
+        ZoneName="Zone 1"/>
+    </ZoneGroup>
+    <ZoneGroup Coordinator="RINCON_00112233445501500" ID="RINCON_00112233445501500:2">
+      <ZoneGroupMember UUID="RINCON_00112233445501500"
+        Location="http://192.0.2.10:1500/xml/device_description.xml"
+        ZoneName="Zone 2"/>
+    </ZoneGroup>
+    <ZoneGroup Coordinator="RINCON_00112233445501600" ID="RINCON_00112233445501600:3">
+      <ZoneGroupMember UUID="RINCON_00112233445501600"
+        Location="http://192.0.2.10:1600/xml/device_description.xml"
+        ZoneName="Zone 3"/>
+    </ZoneGroup>
+    <ZoneGroup Coordinator="RINCON_00112233445501700" ID="RINCON_00112233445501700:4">
+      <ZoneGroupMember UUID="RINCON_00112233445501700"
+        Location="http://192.0.2.10:1700/xml/device_description.xml"
+        ZoneName="Zone 4"/>
+    </ZoneGroup>
+  </ZoneGroups>
+  <VanishedDevices/>
+</ZoneGroupState>

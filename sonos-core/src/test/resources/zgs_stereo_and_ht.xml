@@ -1,0 +1,44 @@
+<!-- Hand-built. Shapes follow SoCo zonegroupstate.py: Satellite elements nested under the HT primary,
+     bonded secondaries marked Invisible="1", maps in ChannelMapSet / HTSatChanMapSet attributes. -->
+<ZoneGroupState>
+  <ZoneGroups>
+    <ZoneGroup Coordinator="RINCON_BAR000000001400" ID="RINCON_BAR000000001400:12">
+      <ZoneGroupMember UUID="RINCON_BAR000000001400" Location="http://192.168.1.20:1400/xml/device_description.xml"
+          ZoneName="Living Room" SoftwareVersion="85.0-65020"
+          HTSatChanMapSet="RINCON_BAR000000001400:LF,RF;RINCON_SUB000000001400:SW;RINCON_SLL00000001400:LR;RINCON_SLR00000001400:RR">
+        <Satellite UUID="RINCON_SUB000000001400" Location="http://192.168.1.21:1400/xml/device_description.xml"
+            ZoneName="Living Room" Invisible="1" SoftwareVersion="85.0-65020"
+            HTSatChanMapSet="RINCON_BAR000000001400:LF,RF;RINCON_SUB000000001400:SW;RINCON_SLL00000001400:LR;RINCON_SLR00000001400:RR"/>
+        <Satellite UUID="RINCON_SLL00000001400" Location="http://192.168.1.22:1400/xml/device_description.xml"
+            ZoneName="Living Room" Invisible="1" SoftwareVersion="85.0-65020"
+            HTSatChanMapSet="RINCON_BAR000000001400:LF,RF;RINCON_SUB000000001400:SW;RINCON_SLL00000001400:LR;RINCON_SLR00000001400:RR"/>
+        <Satellite UUID="RINCON_SLR00000001400" Location="http://192.168.1.23:1400/xml/device_description.xml"
+            ZoneName="Living Room" Invisible="1" SoftwareVersion="85.0-65020"
+            HTSatChanMapSet="RINCON_BAR000000001400:LF,RF;RINCON_SUB000000001400:SW;RINCON_SLL00000001400:LR;RINCON_SLR00000001400:RR"/>
+      </ZoneGroupMember>
+    </ZoneGroup>
+    <ZoneGroup Coordinator="RINCON_LEFT0000001400" ID="RINCON_LEFT0000001400:7">
+      <ZoneGroupMember UUID="RINCON_LEFT0000001400" Location="http://192.168.1.30:1400/xml/device_description.xml"
+          ZoneName="Office" SoftwareVersion="85.0-65020"
+          ChannelMapSet="RINCON_LEFT0000001400:LF,LF;RINCON_RIGHT000001400:RF,RF"/>
+      <ZoneGroupMember UUID="RINCON_RIGHT000001400" Location="http://192.168.1.31:1400/xml/device_description.xml"
+          ZoneName="Office" Invisible="1" SoftwareVersion="85.0-65020"
+          ChannelMapSet="RINCON_LEFT0000001400:LF,LF;RINCON_RIGHT000001400:RF,RF"/>
+      <ZoneGroupMember UUID="RINCON_KITCHEN00001400" Location="http://192.168.1.32:1400/xml/device_description.xml"
+          ZoneName="Kitchen" SoftwareVersion="85.0-65020"/>
+    </ZoneGroup>
+    <ZoneGroup Coordinator="RINCON_FIVE00000001400" ID="RINCON_FIVE00000001400:3">
+      <ZoneGroupMember UUID="RINCON_FIVE00000001400" Location="http://192.168.1.40:1400/xml/device_description.xml"
+          ZoneName="Den" SoftwareVersion="85.0-65020"
+          ChannelMapSet="RINCON_FIVE00000001400:LF,RF;RINCON_DENSUB0000001400:SW,SW"/>
+      <ZoneGroupMember UUID="RINCON_DENSUB0000001400" Location="http://192.168.1.41:1400/xml/device_description.xml"
+          ZoneName="Den" Invisible="1" SoftwareVersion="85.0-65020"
+          ChannelMapSet="RINCON_FIVE00000001400:LF,RF;RINCON_DENSUB0000001400:SW,SW"/>
+    </ZoneGroup>
+    <ZoneGroup Coordinator="RINCON_BRIDGE000001400" ID="RINCON_BRIDGE000001400:0">
+      <ZoneGroupMember UUID="RINCON_BRIDGE000001400" Location="http://192.168.1.2:1400/xml/device_description.xml"
+          ZoneName="BRIDGE" Invisible="1" IsZoneBridge="1"/>
+    </ZoneGroup>
+  </ZoneGroups>
+  <VanishedDevices/>
+</ZoneGroupState>

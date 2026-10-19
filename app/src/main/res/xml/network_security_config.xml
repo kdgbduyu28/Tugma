@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Speakers only speak plain HTTP on the LAN (port 1400). Android can't scope cleartext to IP
+     ranges, so it is allowed here and LanOnlyTransport refuses any non-private host in code. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
