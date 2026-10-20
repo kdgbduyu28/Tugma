@@ -1,5 +1,7 @@
 # Tugma
 
+[![CI](https://github.com/kdgbduyu28/Tugma/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kdgbduyu28/Tugma/actions/workflows/ci.yml)
+
 An unofficial Android controller that pairs speakers the official apps won't:
 
 - **Stereo pairs of different Sonos models** (e.g. One + Era 100).
