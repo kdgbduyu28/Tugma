@@ -87,6 +87,8 @@ fun AboutScreen() {
                     "Protocol formats were checked against SoCo (github.com/SoCo/SoCo, MIT licence) and " +
                     "pair-sonos by Erik Månsson (github.com/erikmansson/pair-sonos, MIT licence). " +
                     "Test fixtures include sample topology payloads from SoCo's test suite.\n\n" +
+                    "Soundcore support is ported from OpenSCQ30 by Kyle Scheuing and contributors " +
+                    "(github.com/Oppzippy/OpenSCQ30, GPL-3.0), including its packet test vectors.\n\n" +
                     "Sonos is a trademark of Sonos, Inc., used here only to say which speakers Tugma works with.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

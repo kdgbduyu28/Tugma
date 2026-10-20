@@ -79,6 +79,9 @@ import kotlin.math.roundToInt
 
 class HeadphonesViewModel(private val c: AppContainer) : ViewModel() {
     val bluetooth = c.bluetooth.state
+    val demo = c.settings.demoMode
+    fun isSoundcore(name: String) = c.soundcore.isLikelySoundcore(name)
+    val demoSoundcore = c.soundcore.demoCandidate
     val output = c.output.current
     val library = c.eq.library
     val enabled = c.eq.enabled
@@ -164,8 +167,9 @@ class HeadphonesViewModel(private val c: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HeadphonesScreen() {
+fun HeadphonesScreen(onSoundcore: (address: String, name: String) -> Unit) {
     val vm = containerViewModel { HeadphonesViewModel(it) }
+    val demo by vm.demo.collectAsState()
     val bt by vm.bluetooth.collectAsState()
     val out by vm.output.collectAsState()
     val lib by vm.library.collectAsState()
@@ -281,6 +285,16 @@ fun HeadphonesScreen() {
 
             // Paired devices.
             SectionLabel("Bluetooth devices")
+            if (demo) {
+                val d = vm.demoSoundcore
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(d.name, style = MaterialTheme.typography.bodyLarge)
+                        Text("Demo device: fake Soundcore earbuds for trying the settings screen", style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(onClick = { onSoundcore(d.address, d.name) }) { Text("Settings") }
+                }
+            }
             when {
                 !bt.permissionGranted && Build.VERSION.SDK_INT >= 31 -> {
                     Text("Allow Nearby devices so Tugma can list your paired headphones and give each its own EQ profile.", style = MaterialTheme.typography.bodyMedium)
@@ -288,7 +302,9 @@ fun HeadphonesScreen() {
                 }
                 !bt.adapterOn -> Text("Bluetooth is off.", style = MaterialTheme.typography.bodyMedium)
                 bt.devices.isEmpty() -> Text("No paired audio devices.", style = MaterialTheme.typography.bodyMedium)
-                else -> bt.devices.forEach { d -> DeviceRow(d, lib) { id -> vm.assign(d.eqKey, id, d.name) } }
+                else -> bt.devices.forEach { d ->
+                    DeviceRow(d, lib, soundcore = vm.isSoundcore(d.name), onSoundcore = { onSoundcore(d.address, d.name) }) { id -> vm.assign(d.eqKey, id, d.name) }
+                }
             }
 
             // Codec: read-only and honest about it.
@@ -412,7 +428,7 @@ private fun ProfileMenu(label: String, lib: EqLibrary, includeDefault: Boolean, 
 }
 
 @Composable
-private fun DeviceRow(d: BtAudioDevice, lib: EqLibrary, onAssign: (String?) -> Unit) {
+private fun DeviceRow(d: BtAudioDevice, lib: EqLibrary, soundcore: Boolean, onSoundcore: () -> Unit, onAssign: (String?) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(
             when (d.kind) {
@@ -431,6 +447,7 @@ private fun DeviceRow(d: BtAudioDevice, lib: EqLibrary, onAssign: (String?) -> U
             }
             Text("EQ: ${lib.profileFor(d.eqKey).name}", style = MaterialTheme.typography.bodySmall)
             Text(d.address, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (soundcore) TextButton(onClick = onSoundcore) { Text("Soundcore settings") }
         }
         ProfileMenu("EQ", lib, includeDefault = true, onPick = onAssign)
     }

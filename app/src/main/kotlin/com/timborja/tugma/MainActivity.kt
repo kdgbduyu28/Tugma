@@ -35,6 +35,7 @@ import com.timborja.tugma.ui.HeadphonesScreen
 import com.timborja.tugma.ui.HomeTheaterScreen
 import com.timborja.tugma.ui.SnapshotDetailScreen
 import com.timborja.tugma.ui.SnapshotsScreen
+import com.timborja.tugma.ui.SoundcoreScreen
 import com.timborja.tugma.ui.SpeakerDetailScreen
 import com.timborja.tugma.ui.SpeakersScreen
 import com.timborja.tugma.ui.StereoPairScreen
@@ -122,7 +123,16 @@ private fun TugmaNav() {
             ) { HomeTheaterScreen(it.arguments?.getString("bar"), onBack = { nav.popBackStack() }) }
             composable("snapshots") { SnapshotsScreen(onOpen = { id -> nav.navigate("snapshot/$id") }) }
             composable("snapshot/{id}") { SnapshotDetailScreen(it.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() }) }
-            composable("headphones") { HeadphonesScreen() }
+            composable("headphones") {
+                HeadphonesScreen(onSoundcore = { address, name -> nav.navigate("soundcore/${Uri.encode(address)}/${Uri.encode(name)}") })
+            }
+            composable("soundcore/{address}/{name}") {
+                SoundcoreScreen(
+                    address = it.arguments?.getString("address").orEmpty(),
+                    name = it.arguments?.getString("name").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                )
+            }
             composable("debug") { DebugScreen() }
             composable("about") { AboutScreen() }
         }

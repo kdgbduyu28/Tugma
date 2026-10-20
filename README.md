@@ -7,6 +7,7 @@ An unofficial Android controller that pairs speakers the official apps won't:
 - **Volume, mute and play/pause for any brand's Wi-Fi speaker** that exposes a standard UPnP/DLNA MediaRenderer, plus the same controls for Sonos.
 - **Google Cast speakers, displays and groups** (Chromecast built-in, from any maker): volume, mute and playback. Groups and pairs made in Google Home are shown read-only.
 - **Phone-side EQ for any headphone or speaker**: 10-band graphic EQ with preamp, presets, AutoEQ import, and a profile per output device that switches automatically.
+- **Soundcore headphone settings (experimental)**, ported from [OpenSCQ30](https://github.com/Oppzippy/OpenSCQ30): battery, noise cancelling / transparency, and the headphones' own EQ, for the models whose protocol is ported.
 
 Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400). It needs no cloud account.
 
@@ -20,6 +21,7 @@ Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400)
 | `:upnp-core` | SSDP discovery, SOAP envelopes, the XML helper, OkHttp transport, a LAN-only guard, the DLNA renderer client (`dlna/`), fake renderers (`demo/`) |
 | `:cast-core` | CASTV2 over TLS (hand-written protobuf frames, JSON namespaces): receiver volume/mute, media play/pause/next, `FakeCastHousehold` |
 | `:eq-core` | EQ profiles, presets, per-device library, RBJ biquad maths, AutoEQ `ParametricEQ.txt` / `GraphicEQ.txt` import |
+| `:bt-core` | Bluetooth RFCOMM transport interface and the Soundcore protocol: packet framing and checksum, model table, parsers, device session, `FakeSoundcoreQ30` |
 | `:sonos-core` | Topology parser, bond roles, pair/home-theater planners and rules, snapshots and restore, `FakeSonosHousehold` |
 | `:cli` | Desktop tool for checking every command against real speakers before using the app |
 | `:app` | Jetpack Compose app (minSdk 26) |
@@ -29,7 +31,7 @@ The protocol modules are plain Kotlin/JVM with no Android dependencies.
 ## Build
 
 ```bash
-./gradlew test                 # 63 protocol and EQ tests
+./gradlew test                 # 80 protocol, EQ and Bluetooth tests
 ./gradlew :app:assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :cli:installDist     # cli/build/install/tugma/bin/tugma
 ```
@@ -124,6 +126,27 @@ The **Headphones** tab shows where audio is playing now, your paired Bluetooth a
 - **Global EQ:** some phones refuse effects on the global output mix. The EQ then only reaches apps that announce their audio sessions, and Tugma says so.
 - **After a reboot:** the EQ restarts the next time you open Tugma, not on its own.
 
+## Soundcore (experimental)
+
+Ported from OpenSCQ30 (GPL-3.0). **Not yet tested on real Soundcore hardware.** Its packet tests use OpenSCQ30's byte vectors, several of them captured from real devices.
+
+**How it works:**
+- **Connection:** RFCOMM to Soundcore's vendor service (`0cf12d31-fac3-4553-bd80-d6832e7xxxxx`), falling back to SPP.
+- **Packets:** `08 ee 00 00 00` (outbound) or `09 ff 00 00 01` (inbound), a 2-byte command, a little-endian u16 total length, the body, and an 8-bit sum checksum.
+- **Model detection:** guessed from the service UUID or the Bluetooth name. You can override it on the settings screen.
+
+**Ported by model:**
+
+| Feature | Models |
+|---|---|
+| Battery (single/dual + charging) | Most models |
+| Firmware + serial | All models |
+| Noise cancelling / transparency (classic format) | Q20i, Life Q35, Life Q30, Vortex, Life Dot 2S, Liberty 2 Pro+, Life Dot 2 NC, Life Note 3, Liberty Air 2 Pro |
+| Headphone EQ (8 bands, presets + custom) | Life Q35, Life Q30, Life 2 Neo, C50i (one channel); Vortex, Life Note 3, Life Note 3S (both earbuds) |
+| Full state on connect | Life Q30 |
+
+**Not ported yet:** newer models' own sound-mode format, HearID-based EQ, button remapping, and per-model state packets. Those models show battery and firmware; undecoded packets appear in the Debug log.
+
 ## Licence
 
 GPL-3.0-or-later (see `LICENSE`).
@@ -131,3 +154,4 @@ GPL-3.0-or-later (see `LICENSE`).
 Credits:
 - Protocol formats were checked against [SoCo](https://github.com/SoCo/SoCo) (MIT) and [pair-sonos](https://github.com/erikmansson/pair-sonos) (MIT).
 - Two topology fixtures come from SoCo's test suite.
+- Soundcore support is ported from [OpenSCQ30](https://github.com/Oppzippy/OpenSCQ30) by Kyle Scheuing and contributors (GPL-3.0), including its packet test vectors.

@@ -16,6 +16,7 @@ import com.timborja.tugma.data.NetworkMonitor
 import com.timborja.tugma.data.Settings
 import com.timborja.tugma.data.SnapshotStore
 import com.timborja.tugma.data.SonosRepository
+import com.timborja.tugma.data.SoundcoreRepository
 import com.timborja.tugma.eq.EqRepository
 import com.timborja.tugma.eq.OutputMonitor
 import com.timborja.tugma.sonos.SonosClient
@@ -56,6 +57,7 @@ class AppContainer(context: Context) {
     val bluetooth = BluetoothRepository(context)
     val eq = EqRepository(context)
     val output = OutputMonitor(context)
+    val soundcore = SoundcoreRepository(context, log)
 
     /** Every brand's speakers. New adapters (Linkplay…) get added here. */
     val sources: List<SpeakerSource> = listOf(sonos, dlna, cast)
