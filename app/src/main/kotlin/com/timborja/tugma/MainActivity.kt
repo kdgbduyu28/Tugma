@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Speaker
@@ -30,6 +31,7 @@ import androidx.navigation.navArgument
 import com.timborja.tugma.core.Brand
 import com.timborja.tugma.ui.AboutScreen
 import com.timborja.tugma.ui.DebugScreen
+import com.timborja.tugma.ui.HeadphonesScreen
 import com.timborja.tugma.ui.HomeTheaterScreen
 import com.timborja.tugma.ui.SnapshotDetailScreen
 import com.timborja.tugma.ui.SnapshotsScreen
@@ -44,12 +46,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent { TugmaTheme { TugmaNav() } }
     }
+
+    override fun onStart() {
+        super.onStart()
+        // The EQ was on when the app last ran (e.g. before a reboot); start it again while we're in the foreground.
+        val eq = (application as TugmaApp).container.eq
+        if (eq.enabled.value && !eq.status.value.running) eq.setEnabled(true)
+    }
 }
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val tabs = listOf(
     Tab("speakers", "Speakers", Icons.Outlined.Speaker),
+    Tab("headphones", "Headphones", Icons.Outlined.Headphones),
     Tab("snapshots", "Snapshots", Icons.Outlined.History),
     Tab("debug", "Debug", Icons.Outlined.BugReport),
     Tab("about", "About", Icons.Outlined.Info),
@@ -112,6 +122,7 @@ private fun TugmaNav() {
             ) { HomeTheaterScreen(it.arguments?.getString("bar"), onBack = { nav.popBackStack() }) }
             composable("snapshots") { SnapshotsScreen(onOpen = { id -> nav.navigate("snapshot/$id") }) }
             composable("snapshot/{id}") { SnapshotDetailScreen(it.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() }) }
+            composable("headphones") { HeadphonesScreen() }
             composable("debug") { DebugScreen() }
             composable("about") { AboutScreen() }
         }

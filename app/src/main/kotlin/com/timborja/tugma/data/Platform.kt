@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
+import androidx.core.content.edit
 import com.timborja.tugma.sonos.TopologySnapshot
 import com.timborja.tugma.upnp.Discoverer
 import com.timborja.tugma.upnp.SsdpResponse
@@ -32,12 +33,12 @@ class Settings(context: Context) {
     val manualHosts: StateFlow<Set<String>> = _manualHosts.asStateFlow()
 
     fun setDemoMode(on: Boolean) {
-        prefs.edit().putBoolean(KEY_DEMO, on).apply()
+        prefs.edit { putBoolean(KEY_DEMO, on) }
         _demoMode.value = on
     }
 
     fun setExperimentalFronts(on: Boolean) {
-        prefs.edit().putBoolean(KEY_FRONTS, on).apply()
+        prefs.edit { putBoolean(KEY_FRONTS, on) }
         _experimentalFronts.value = on
     }
 
@@ -45,7 +46,7 @@ class Settings(context: Context) {
     fun removeManualHost(host: String) = setHosts(_manualHosts.value - host)
 
     private fun setHosts(hosts: Set<String>) {
-        prefs.edit().putStringSet(KEY_HOSTS, hosts).apply()
+        prefs.edit { putStringSet(KEY_HOSTS, hosts) }
         _manualHosts.value = hosts
     }
 

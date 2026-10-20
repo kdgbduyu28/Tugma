@@ -7,6 +7,7 @@ import com.timborja.tugma.core.CommandLog
 import com.timborja.tugma.core.InMemoryCommandLog
 import com.timborja.tugma.core.SpeakerSource
 import com.timborja.tugma.cast.TlsCastConnector
+import com.timborja.tugma.data.BluetoothRepository
 import com.timborja.tugma.data.CastRepository
 import com.timborja.tugma.data.DlnaRepository
 import com.timborja.tugma.data.NsdCastDiscoverer
@@ -15,6 +16,8 @@ import com.timborja.tugma.data.NetworkMonitor
 import com.timborja.tugma.data.Settings
 import com.timborja.tugma.data.SnapshotStore
 import com.timborja.tugma.data.SonosRepository
+import com.timborja.tugma.eq.EqRepository
+import com.timborja.tugma.eq.OutputMonitor
 import com.timborja.tugma.sonos.SonosClient
 import com.timborja.tugma.upnp.LanOnlyTransport
 import com.timborja.tugma.upnp.LoggingTransport
@@ -49,6 +52,10 @@ class AppContainer(context: Context) {
         realConnector = TlsCastConnector(),
         realDiscoverer = NsdCastDiscoverer(context),
     )
+
+    val bluetooth = BluetoothRepository(context)
+    val eq = EqRepository(context)
+    val output = OutputMonitor(context)
 
     /** Every brand's speakers. New adapters (Linkplay…) get added here. */
     val sources: List<SpeakerSource> = listOf(sonos, dlna, cast)

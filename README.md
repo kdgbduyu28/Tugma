@@ -6,6 +6,7 @@ An unofficial Android controller that pairs speakers the official apps won't:
 - **Any speaker as a soundbar's surrounds or sub** (fronts are experimental and hidden by default).
 - **Volume, mute and play/pause for any brand's Wi-Fi speaker** that exposes a standard UPnP/DLNA MediaRenderer, plus the same controls for Sonos.
 - **Google Cast speakers, displays and groups** (Chromecast built-in, from any maker): volume, mute and playback. Groups and pairs made in Google Home are shown read-only.
+- **Phone-side EQ for any headphone or speaker**: 10-band graphic EQ with preamp, presets, AutoEQ import, and a profile per output device that switches automatically.
 
 Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400). It needs no cloud account.
 
@@ -18,6 +19,7 @@ Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400)
 | `:core` | Vendor-neutral models: brands, capabilities, `SpeakerSource`, `PlaybackControl`, `CommandPlan` (a bonding write must be `confirm()`ed before it can run), command log |
 | `:upnp-core` | SSDP discovery, SOAP envelopes, the XML helper, OkHttp transport, a LAN-only guard, the DLNA renderer client (`dlna/`), fake renderers (`demo/`) |
 | `:cast-core` | CASTV2 over TLS (hand-written protobuf frames, JSON namespaces): receiver volume/mute, media play/pause/next, `FakeCastHousehold` |
+| `:eq-core` | EQ profiles, presets, per-device library, RBJ biquad maths, AutoEQ `ParametricEQ.txt` / `GraphicEQ.txt` import |
 | `:sonos-core` | Topology parser, bond roles, pair/home-theater planners and rules, snapshots and restore, `FakeSonosHousehold` |
 | `:cli` | Desktop tool for checking every command against real speakers before using the app |
 | `:app` | Jetpack Compose app (minSdk 26) |
@@ -27,7 +29,7 @@ The protocol modules are plain Kotlin/JVM with no Android dependencies.
 ## Build
 
 ```bash
-./gradlew test                 # 52 protocol tests
+./gradlew test                 # 63 protocol and EQ tests
 ./gradlew :app:assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :cli:installDist     # cli/build/install/tugma/bin/tugma
 ```
@@ -97,6 +99,30 @@ In the app, the **Debug** tab logs every request and response and can share them
   - Certificates: Cast devices use certificates no public CA signs, so they aren't verified. Connections are therefore refused for anything but private-network addresses.
   - Limits: apps without the standard media namespace allow volume changes but not playback control. Google exposes no local API for creating groups or stereo pairs.
   - Discovery: the app browses mDNS `_googlecast._tcp` with `NsdManager` and reads TXT `id`/`fn`/`md`/`rs`.
+
+## Headphones and EQ
+
+The **Headphones** tab shows where audio is playing now, your paired Bluetooth audio devices (needs the Nearby devices permission), and the EQ.
+
+**How the EQ works:**
+- **Engine:** Android's `DynamicsProcessing` (Android 9+) or `Equalizer` (Android 8).
+- **Where it attaches:** the global output mix where the phone allows it, plus every audio session a music app announces (`ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION`).
+- **Background running:** a foreground service (`specialUse`) keeps it running while switched on.
+- **Clipping:** a limiter catches boosts that would clip.
+- **Per-device profiles:** each output (a Bluetooth device, wired, USB or the phone speaker) can have its own profile, and it switches when the output changes.
+- **Live preview:** unsaved edits play live.
+
+**AutoEQ import:** pick a `ParametricEQ.txt` or `GraphicEQ.txt` from [AutoEQ](https://github.com/jaakkopasanen/AutoEq).
+- Parametric filters (PK, LSC, HSC) are evaluated as RBJ biquads at 48 kHz and sampled onto 31 third-octave bands.
+- Unsupported filter types are skipped and reported.
+
+**Android limits Tugma can't work around:**
+- **Codec switching** (SBC/AAC/LDAC…) is system-only (`BLUETOOTH_PRIVILEGED`).
+  - Tugma lists the phone's supported codecs (Android 15+).
+  - It shows the active codec only if Android announces it.
+  - It links to Developer options → Bluetooth audio codec.
+- **Global EQ:** some phones refuse effects on the global output mix. The EQ then only reaches apps that announce their audio sessions, and Tugma says so.
+- **After a reboot:** the EQ restarts the next time you open Tugma, not on its own.
 
 ## Licence
 
