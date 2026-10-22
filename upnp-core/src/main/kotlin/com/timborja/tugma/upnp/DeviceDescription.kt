@@ -20,7 +20,7 @@ data class DeviceDescription(
     /** Root device first, then embedded devices depth-first. */
     val devices: List<DeviceNode> = emptyList(),
 ) {
-    data class ServiceInfo(val serviceType: String, val controlUrl: String, val scpdUrl: String)
+    data class ServiceInfo(val serviceType: String, val controlUrl: String, val scpdUrl: String, val eventSubUrl: String = "")
 
     data class DeviceNode(
         val udn: String?,
@@ -56,6 +56,7 @@ data class DeviceDescription(
                             serviceType = s.childText("serviceType").orEmpty(),
                             controlUrl = s.childText("controlURL").orEmpty(),
                             scpdUrl = s.childText("SCPDURL").orEmpty(),
+                            eventSubUrl = s.childText("eventSubURL").orEmpty(),
                         )
                     }.orEmpty(),
                 )

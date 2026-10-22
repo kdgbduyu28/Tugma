@@ -30,6 +30,20 @@ interface PlaybackControl {
     suspend fun previous()
 }
 
+/**
+ * Speakers that can play a link directly: internet radio or an audio file. [live] marks a
+ * continuous stream, which some platforms (Sonos) need to know.
+ */
+interface UrlPlayback {
+    suspend fun playUrl(url: String, title: String, live: Boolean = true)
+}
+
+/** A saved link. */
+@kotlinx.serialization.Serializable
+data class Station(val name: String, val url: String, val live: Boolean = true) {
+    val isValidUrl: Boolean get() = Regex("^https?://[^\\s/]+.*$", RegexOption.IGNORE_CASE).matches(url.trim())
+}
+
 data class SourceState(
     val loading: Boolean = false,
     val speakers: List<SpeakerSummary> = emptyList(),

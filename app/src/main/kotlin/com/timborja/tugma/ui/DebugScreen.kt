@@ -116,6 +116,10 @@ private fun LogCard(e: LogEntry) {
                     SectionLabel("Request")
                     MonoBlock(e.requestHeaders.entries.joinToString("\n") { "${it.key}: ${it.value}" } + "\n\n" + prettySoap(e.requestBody))
                 }
+                e.toCurl()?.let { curl ->
+                    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                    androidx.compose.material3.TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(curl)) }) { Text("Copy as curl") }
+                }
                 e.responseBody?.let {
                     SectionLabel("Response")
                     MonoBlock(prettySoap(it).take(20_000))

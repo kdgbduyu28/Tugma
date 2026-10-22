@@ -52,6 +52,13 @@ class DlnaRepository(
     override fun playback(id: String): PlaybackControl? =
         renderers.value.firstOrNull { it.id == id }?.let { client().playback(it) }
 
+    /** Event subscription URLs (AVTransport, RenderingControl) the renderer declares. Empty in demo mode. */
+    fun eventUrls(id: String): List<String> {
+        if (demo) return emptyList()
+        val r = renderers.value.firstOrNull { it.id == id } ?: return emptyList()
+        return listOfNotNull(r.avTransport?.eventUrl, r.renderingControl?.eventUrl)
+    }
+
     fun clear() {
         renderers.value = emptyList()
         _summaries.value = SourceState()

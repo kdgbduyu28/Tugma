@@ -32,6 +32,65 @@ class Settings(context: Context) {
     private val _manualHosts = MutableStateFlow(prefs.getStringSet(KEY_HOSTS, emptySet()).orEmpty().toSet())
     val manualHosts: StateFlow<Set<String>> = _manualHosts.asStateFlow()
 
+    private val _hidden = MutableStateFlow(prefs.getStringSet(KEY_HIDDEN, emptySet()).orEmpty().toSet())
+    /** Speakers the user hid from the list, as "BRAND|id". */
+    val hiddenSpeakers: StateFlow<Set<String>> = _hidden.asStateFlow()
+
+    private val _nicknames = MutableStateFlow(decodeNicknames(prefs.getStringSet(KEY_NICKNAMES, emptySet()).orEmpty()))
+    /** Names the user gave speakers whose brand can't be renamed (DLNA, Cast), keyed "BRAND|id". */
+    val nicknames: StateFlow<Map<String, String>> = _nicknames.asStateFlow()
+
+    fun setNickname(key: String, name: String?) {
+        val clean = name?.trim()?.take(40)?.takeIf { it.isNotEmpty() }
+        replaceNicknames(if (clean == null) _nicknames.value - key else _nicknames.value + (key to clean))
+    }
+
+    fun replaceNicknames(map: Map<String, String>) {
+        prefs.edit { putStringSet(KEY_NICKNAMES, map.map { (k, v) -> "$k\t$v" }.toSet()) }
+        _nicknames.value = map
+    }
+
+    private fun decodeNicknames(set: Set<String>): Map<String, String> =
+        set.mapNotNull { e -> e.split('\t', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+
+    fun replaceHidden(keys: Set<String>) {
+        prefs.edit { putStringSet(KEY_HIDDEN, keys) }
+        _hidden.value = keys
+    }
+
+    fun setHidden(key: String, hidden: Boolean) {
+        val next = if (hidden) _hidden.value + key else _hidden.value - key
+        prefs.edit { putStringSet(KEY_HIDDEN, next) }
+        _hidden.value = next
+    }
+
+    private val _theme = MutableStateFlow(
+        runCatching { com.timborja.tugma.ui.ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "SYSTEM") }.getOrDefault(com.timborja.tugma.ui.ThemeMode.SYSTEM),
+    )
+    val theme: StateFlow<com.timborja.tugma.ui.ThemeMode> = _theme.asStateFlow()
+
+    private val _wallpaperColors = MutableStateFlow(prefs.getBoolean(KEY_DYNAMIC, false))
+    val wallpaperColors: StateFlow<Boolean> = _wallpaperColors.asStateFlow()
+
+    fun setTheme(mode: com.timborja.tugma.ui.ThemeMode) {
+        prefs.edit { putString(KEY_THEME, mode.name) }
+        _theme.value = mode
+    }
+
+    fun setWallpaperColors(on: Boolean) {
+        prefs.edit { putBoolean(KEY_DYNAMIC, on) }
+        _wallpaperColors.value = on
+    }
+
+    private val _welcomed = MutableStateFlow(prefs.getBoolean(KEY_WELCOMED, false))
+    /** False until the first-run welcome screen is dismissed. */
+    val welcomed: StateFlow<Boolean> = _welcomed.asStateFlow()
+
+    fun setWelcomed() {
+        prefs.edit { putBoolean(KEY_WELCOMED, true) }
+        _welcomed.value = true
+    }
+
     fun setDemoMode(on: Boolean) {
         prefs.edit { putBoolean(KEY_DEMO, on) }
         _demoMode.value = on
@@ -44,6 +103,7 @@ class Settings(context: Context) {
 
     fun addManualHost(host: String) = setHosts(_manualHosts.value + host)
     fun removeManualHost(host: String) = setHosts(_manualHosts.value - host)
+    fun replaceManualHosts(hosts: Set<String>) = setHosts(hosts)
 
     private fun setHosts(hosts: Set<String>) {
         prefs.edit { putStringSet(KEY_HOSTS, hosts) }
@@ -54,6 +114,11 @@ class Settings(context: Context) {
         const val KEY_DEMO = "demo_mode"
         const val KEY_FRONTS = "experimental_fronts"
         const val KEY_HOSTS = "manual_hosts"
+        const val KEY_HIDDEN = "hidden_speakers"
+        const val KEY_NICKNAMES = "nicknames"
+        const val KEY_THEME = "theme"
+        const val KEY_WELCOMED = "welcomed"
+        const val KEY_DYNAMIC = "wallpaper_colors"
     }
 }
 

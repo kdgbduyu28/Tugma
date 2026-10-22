@@ -11,6 +11,8 @@ data class SonosDeviceInfo(
     val displayName: String?,
     val softwareVersion: String?,
     val serialNumber: String?,
+    /** Declares an AudioIn service, i.e. has a line-in jack. */
+    val hasLineIn: Boolean = false,
 ) {
     /** Same rule as SoCo: lowercase model name ends with a known soundbar/Amp product name. */
     val isSoundbar: Boolean
@@ -32,6 +34,8 @@ data class SonosDeviceInfo(
             displayName = description.extra["displayName"],
             softwareVersion = description.extra["softwareVersion"],
             serialNumber = description.extra["serialNum"],
+            hasLineIn = (description.services + description.devices.flatMap { it.services })
+                .any { it.serviceType.startsWith("urn:schemas-upnp-org:service:AudioIn:") },
         )
     }
 }

@@ -7,6 +7,7 @@ import android.os.Build
 import com.timborja.tugma.cast.CastClient
 import com.timborja.tugma.cast.CastConnector
 import com.timborja.tugma.cast.CastDevice
+import com.timborja.tugma.cast.probe
 import com.timborja.tugma.cast.CastDiscoverer
 import com.timborja.tugma.cast.CastPlayback
 import com.timborja.tugma.cast.demo.FakeCastHousehold
@@ -49,7 +50,14 @@ class CastRepository(
     override suspend fun refresh() = mutex.withLock {
         _summaries.update { it.copy(loading = true, error = null) }
         try {
-            val found = (if (demo) fake else realDiscoverer).discover()
+            val discovered = (if (demo) fake else realDiscoverer).discover()
+            // Addresses added by IP that mDNS didn't find (routers often block it between bands).
+            val manual = if (demo) emptyList() else settings.manualHosts.value
+                .map { it.substringBefore(':') }
+                .filter { h -> discovered.none { it.host == h } }
+                .distinct()
+                .mapNotNull { h -> withTimeoutOrNull(4_000) { client().probe(h) } }
+            val found = (discovered + manual)
                 .distinctBy { it.id }
                 .sortedWith(compareBy({ it.isGroup }, { it.name.lowercase() }))
             devices.value = found

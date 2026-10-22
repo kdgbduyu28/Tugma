@@ -24,7 +24,10 @@ data class HttpRequest(
     val body: String? = null,
 )
 
-data class HttpResponse(val status: Int, val body: String)
+data class HttpResponse(val status: Int, val body: String, val headers: Map<String, String> = emptyMap()) {
+    /** Case-insensitive header lookup. */
+    fun header(name: String): String? = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+}
 
 /** The seam every protocol client talks through: OkHttp in production, fakes in tests and demo mode. */
 fun interface HttpTransport {
@@ -51,7 +54,9 @@ class OkHttpTransport(
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    response.use { cont.resume(HttpResponse(it.code, it.body?.string().orEmpty())) }
+                    response.use { r ->
+                        cont.resume(HttpResponse(r.code, r.body?.string().orEmpty(), r.headers.names().associateWith { n -> r.header(n).orEmpty() }))
+                    }
                 }
             })
         }

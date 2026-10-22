@@ -57,7 +57,31 @@ class SonosClient(private val transport: HttpTransport) {
         renderingControl = ServiceEndpoint(speaker.baseUrl + RC_CONTROL, RC_SERVICE),
         avTransport = ServiceEndpoint(coordinator.baseUrl + AVT_CONTROL, AVT_SERVICE),
         maxVolume = 100,
+        urlFor = ::sonosUri,
     )
+
+    /** Bass/treble/loudness and soundbar EQ on [speaker] (the visible player of a bond). */
+    fun sound(speaker: Endpoint): SonosSound = SonosSound(soap, speaker)
+
+    /** Whole-group volume; [coordinator] must lead the group. */
+    fun groupVolume(coordinator: Endpoint): SonosGroupVolume = SonosGroupVolume(soap, coordinator)
+
+    /** Household alarms; any player answers. */
+    fun alarms(any: Endpoint): SonosAlarms = SonosAlarms(soap, any)
+
+    /** "My Sonos" favorites; any player answers. */
+    fun favorites(any: Endpoint): SonosFavorites = SonosFavorites(soap, any)
+
+    fun player(coordinator: Endpoint, coordinatorUuid: String): SonosPlayer = SonosPlayer(soap, coordinator, coordinatorUuid)
+
+    fun queue(coordinator: Endpoint, coordinatorUuid: String): SonosQueue = SonosQueue(soap, coordinator, coordinatorUuid)
+
+    fun inputs(coordinator: Endpoint): SonosInputs = SonosInputs(soap, coordinator)
+
+    /** Status light, touch lock, Trueplay and room name on [speaker] itself. */
+    fun settings(speaker: Endpoint): SonosSettings = SonosSettings(soap, speaker)
+
+    fun sleepTimer(coordinator: Endpoint): SonosSleepTimer = SonosSleepTimer(soap, coordinator)
 
     private suspend fun get(endpoint: Endpoint, path: String): String {
         val r = transport.execute(HttpRequest("GET", endpoint.baseUrl + path))
@@ -66,6 +90,10 @@ class SonosClient(private val transport: HttpTransport) {
     }
 
     companion object {
+        /** Sonos plays plain HTTP radio only as `x-rincon-mp3radio:` (SoCo `play_uri(force_radio=True)`). */
+        fun sonosUri(url: String, live: Boolean): String =
+            if (live && url.startsWith("http://", ignoreCase = true)) "x-rincon-mp3radio:" + url.substringAfter(':') else url
+
         const val DEFAULT_PORT = 1400
         const val DEVICE_DESCRIPTION_PATH = "/xml/device_description.xml"
         const val DEVICE_PROPERTIES_SCPD = "/xml/DeviceProperties1.xml"

@@ -152,3 +152,57 @@ class CastPlaybackTest {
         assertFailsWith<NotLocalNetworkException> { TlsCastConnector().connect("8.8.8.8", 8009) }
     }
 }
+
+class CastPlayUrlTest {
+    private val fake = FakeCastHousehold()
+    private val client = CastClient(fake, null, timeoutMillis = 2_000)
+    private fun playback(name: String): CastPlayback {
+        val d = fake.devices.first { it.info.name == name }.info
+        return CastPlayback(client, d.host, d.port)
+    }
+
+    @Test
+    fun `playUrl launches the default media receiver when needed, then loads`() = runTest {
+        val display = playback("Opisina Display")
+        display.playUrl("https://radio.example/live.aac", "Example FM")
+        assertTrue("LAUNCH" in fake.received)
+        assertTrue("LOAD" in fake.received)
+        assertEquals("https://radio.example/live.aac", fake.lastLoaded)
+        val s = display.status()
+        assertEquals(TransportState.PLAYING, s.transport)
+        assertEquals("Example FM", s.title)
+    }
+
+    @Test
+    fun `playUrl reuses a running default media receiver`() = runTest {
+        fake.received.clear()
+        playback("Kwarto Speaker").playUrl("http://radio.example/a.mp3", "A", live = false)
+        assertTrue("LAUNCH" !in fake.received)
+        assertEquals("http://radio.example/a.mp3", fake.lastLoaded)
+    }
+}
+
+class CastProbeTest {
+    @Test
+    fun `probe finds a Cast device by address and ignores other hosts`() = runTest {
+        val fake = FakeCastHousehold()
+        val client = CastClient(fake, null, timeoutMillis = 2_000)
+        val d = client.probe("192.168.50.41")
+        assertEquals("ip:192.168.50.41:8009", d?.id)
+        assertEquals(CastDevice.BY_IP_MODEL, d?.model)
+        assertEquals(null, client.probe("192.168.50.99"))
+    }
+}
+
+class CastStopTest {
+    @Test
+    fun `stopCasting closes the app with its session id`() = runTest {
+        val fake = FakeCastHousehold()
+        val client = CastClient(fake, null, timeoutMillis = 2_000)
+        val d = fake.devices.first { it.info.name == "Kwarto Speaker" }.info
+        val p = CastPlayback(client, d.host, d.port)
+        p.stopCasting()
+        assertEquals(TransportState.NO_MEDIA, p.status().transport)
+        assertTrue(runCatching { p.stopCasting() }.isFailure)
+    }
+}

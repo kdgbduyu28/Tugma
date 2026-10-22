@@ -8,6 +8,7 @@ kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":sonos-core"))
     implementation(project(":cast-core"))
+    implementation(project(":linkplay-core"))
 }
 
 application {

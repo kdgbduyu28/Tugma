@@ -117,3 +117,48 @@ class DlnaTest {
         assertFalse(Scpd.allowedRange(xml, "Volume")!!.isEmpty())
     }
 }
+
+class DlnaPlayUrlTest {
+    private val fake = com.timborja.tugma.upnp.demo.FakeDlnaHousehold()
+    private val client = com.timborja.tugma.upnp.dlna.DlnaClient(fake)
+
+    @Test
+    fun `playUrl sets the URI with a titled DIDL, then plays`() = kotlinx.coroutines.test.runTest {
+        val sala = com.timborja.tugma.upnp.dlna.DlnaDiscovery(client, fake).discover().first { it.friendlyName == "Sala Speaker" }
+        val control = client.playback(sala) as com.timborja.tugma.core.UrlPlayback
+        control.playUrl(" http://radio.example/stream.mp3 ", "Example FM")
+        val r = fake.renderers.getValue(sala.id.let { id -> fake.renderers.keys.first { it.endsWith(id.removePrefix("uuid:")) || it == id } })
+        assertEquals("http://radio.example/stream.mp3", r.uri)
+        assertEquals("PLAYING", r.transport)
+        val status = client.playback(sala).status()
+        assertEquals("Example FM", status.title)
+        assertTrue("object.item.audioItem.audioBroadcast" in com.timborja.tugma.upnp.dlna.Didl.item("x", "y", live = true))
+    }
+
+    @Test
+    fun `station URLs are checked`() {
+        assertTrue(com.timborja.tugma.core.Station("A", "https://example.com/live").isValidUrl)
+        assertTrue(!com.timborja.tugma.core.Station("A", "ftp://example.com").isValidUrl)
+        assertTrue(!com.timborja.tugma.core.Station("A", "http:// spaced").isValidUrl)
+    }
+}
+
+class NowPlayingTest {
+    @Test
+    fun `lines show playing and paused tracks, nothing when stopped`() {
+        fun np(t: com.timborja.tugma.core.TransportState, title: String?, artist: String?) = com.timborja.tugma.upnp.dlna.NowPlaying(t, title, artist)
+        assertEquals("▶ Song — Band", np(com.timborja.tugma.core.TransportState.PLAYING, "Song", "Band").line)
+        assertEquals("Paused · Song", np(com.timborja.tugma.core.TransportState.PAUSED, "Song", null).line)
+        assertEquals(null, np(com.timborja.tugma.core.TransportState.STOPPED, "Song", null).line)
+    }
+
+    @Test
+    fun `nowPlaying uses only transport queries`() = kotlinx.coroutines.test.runTest {
+        val fake = com.timborja.tugma.upnp.demo.FakeDlnaHousehold()
+        val client = com.timborja.tugma.upnp.dlna.DlnaClient(fake)
+        val sala = com.timborja.tugma.upnp.dlna.DlnaDiscovery(client, fake).discover().first { it.friendlyName == "Sala Speaker" }
+        fake.receivedActions.clear()
+        (client.playback(sala) as com.timborja.tugma.upnp.dlna.UpnpPlaybackControl).nowPlaying()
+        assertEquals(setOf("GetTransportInfo", "GetPositionInfo"), fake.receivedActions.toSet())
+    }
+}

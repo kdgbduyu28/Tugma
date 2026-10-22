@@ -2,42 +2,15 @@ package com.timborja.tugma.data
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothSocket
 import android.content.Context
 import androidx.core.content.edit
-import com.timborja.tugma.bt.soundcore.BtTransport
 import com.timborja.tugma.bt.soundcore.FakeSoundcoreQ30
 import com.timborja.tugma.bt.soundcore.SoundcoreDevice
 import com.timborja.tugma.bt.soundcore.SoundcoreModel
 import com.timborja.tugma.bt.soundcore.SoundcoreModels
 import com.timborja.tugma.bt.soundcore.SoundcoreUuids
 import com.timborja.tugma.core.CommandLog
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withContext
 import java.util.UUID
-
-/** RFCOMM socket as a [BtTransport]. */
-private class RfcommTransport(private val socket: BluetoothSocket) : BtTransport {
-    private val input = socket.inputStream
-    private val output = socket.outputStream
-    private val buffer = ByteArray(1024)
-
-    override suspend fun write(bytes: ByteArray) = withContext(Dispatchers.IO) {
-        output.write(bytes)
-        output.flush()
-    }
-
-    override suspend fun read(): ByteArray = runInterruptible(Dispatchers.IO) {
-        val n = input.read(buffer)
-        if (n < 0) throw java.io.IOException("Connection closed")
-        buffer.copyOf(n)
-    }
-
-    override fun close() {
-        runCatching { socket.close() }
-    }
-}
 
 /** A paired device that might be a Soundcore, with Tugma's best model guess. */
 data class SoundcoreCandidate(val address: String, val name: String, val guess: SoundcoreModel?, val uuidHint: String?)
@@ -79,10 +52,7 @@ class SoundcoreRepository(
         }
         val device = adapter?.getRemoteDevice(address) ?: error("Bluetooth is unavailable")
         val uuid: UUID = SoundcoreUuids.pick(device.uuids?.map { it.uuid }.orEmpty())
-        val socket = withContext(Dispatchers.IO) {
-            device.createRfcommSocketToServiceRecord(uuid).also { it.connect() }
-        }
-        return SoundcoreDevice(model, RfcommTransport(socket), log, address)
+        return SoundcoreDevice(model, openRfcomm(context, address, uuid), log, address)
     }
 
     companion object {

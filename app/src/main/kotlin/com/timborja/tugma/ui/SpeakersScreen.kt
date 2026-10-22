@@ -79,9 +79,46 @@ class SpeakersViewModel(c: AppContainer) : PlanViewModel(c) {
         c.sources.forEach { source -> viewModelScope.launch { source.refresh() } }
     }
 
+    fun pauseAll() {
+        viewModelScope.launch {
+            val n = c.sonos.pauseAll()
+            message = if (n == 0) "Nothing was playing" else "Paused $n ${if (n == 1) "group" else "groups"}"
+        }
+    }
+
+    val paused = c.sonos.paused
+    val hidden = c.settings.hiddenSpeakers
+    val nicknames = c.settings.nicknames
+    var showHidden by mutableStateOf(false)
+    /** Search text; matches name, model or address. */
+    var query by mutableStateOf("")
+
+    /** Now-playing lines by coordinator UUID, refreshed while the tab is open. */
+    var nowPlaying by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
+    private val liveNowPlaying = com.timborja.tugma.data.LiveNowPlaying(c.events, viewModelScope)
+    /** Lines from live events, which win over polled ones. */
+    val liveLines = liveNowPlaying.lines
+    val live = liveNowPlaying.live
+
+    suspend fun pollNowPlaying() {
+        liveNowPlaying.watch(c.sonos.coordinatorEventUrls())
+        nowPlaying = c.sonos.nowPlaying().mapNotNull { (k, v) -> v.line?.let { k to it } }.toMap()
+    }
+
+    fun stopLive() = liveNowPlaying.stop()
+
+    fun resumeAll() {
+        viewModelScope.launch {
+            val n = c.sonos.resumePaused()
+            message = if (n == 0) "Nothing to resume" else "Resumed $n ${if (n == 1) "group" else "groups"}"
+        }
+    }
+
     fun addHost(host: String) {
         c.settings.addManualHost(host)
-        refresh()
+        refreshAll()
     }
 
     fun startDemo() {
@@ -108,21 +145,54 @@ private val SonosSpeaker.hostLabel: String get() = endpoint.toString()
 fun SpeakersScreen(
     onPair: (String?) -> Unit,
     onHomeTheater: (String?) -> Unit,
+    onGroups: () -> Unit,
+    onScenes: () -> Unit,
+    onDiagnostics: () -> Unit,
+    onMixer: () -> Unit,
     onOpen: (Brand, String) -> Unit,
+    onLinkplayGroups: () -> Unit,
 ) {
     val vm = containerViewModel { SpeakersViewModel(it) }
+    val liveLines by vm.liveLines.collectAsState()
     val ui by vm.household.collectAsState()
-    val others = vm.others.map { it.brand to it.summaries.collectAsState().value }
+    val rawOthers = vm.others.map { it.brand to it.summaries.collectAsState().value }
+    // Linkplay speakers also answer as DLNA renderers; show them once, under Linkplay.
+    val linkplayHosts = rawOthers.firstOrNull { it.first == Brand.LINKPLAY }?.second?.speakers?.map { it.host }?.toSet().orEmpty()
+    val hidden by vm.hidden.collectAsState()
+    val nicknames by vm.nicknames.collectAsState()
+    fun visible(brand: Brand, id: String) = vm.showHidden || "${brand.name}|$id" !in hidden
+    val q = vm.query.trim().lowercase()
+    fun matches(vararg fields: String?) = q.isEmpty() || fields.any { it?.lowercase()?.contains(q) == true }
+    val others = rawOthers.map { (b, st) ->
+        val dedup = if (b == Brand.UPNP) st.speakers.filter { it.host !in linkplayHosts } else st.speakers
+        b to st.copy(
+            speakers = dedup.filter { visible(b, it.id) }
+                .map { s -> nicknames["${b.name}|${s.id}"]?.let { s.copy(name = it) } ?: s }
+                .filter { matches(it.name, it.model, it.host, it.manufacturer) },
+        )
+    }
     val onLan by vm.onLan.collectAsState()
     val demo by vm.demo.collectAsState()
     var addHost by remember { mutableStateOf(false) }
 
     val h = ui.household
-    val counts = (mapOf(Brand.SONOS to (h?.speakers?.count { !it.invisible } ?: 0)) + others.associate { (b, st) -> b to st.speakers.size })
+    // Now-playing lines: live events where the speakers allow them, plus light polling (slower while
+    // events flow). Kept outside the list so scrolling doesn't stop them; both end when the tab closes.
+    if (h != null) {
+        androidx.compose.runtime.LaunchedEffect(h.fetchedAtMillis) {
+            while (true) {
+                runCatching { vm.pollNowPlaying() }
+                kotlinx.coroutines.delay(if (vm.live.value) 120_000 else 30_000)
+            }
+        }
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.stopLive() } }
+    val counts = (mapOf(Brand.SONOS to (h?.speakers?.count { !it.invisible && visible(Brand.SONOS, it.uuid) && matches(it.roomName, it.modelName, it.host) } ?: 0)) + others.associate { (b, st) -> b to st.speakers.size })
         .filterValues { it > 0 }
     val showSonos = vm.filter == null || vm.filter == Brand.SONOS
     val loading = ui.loading || others.any { it.second.loading }
-    val nothingFound = counts.isEmpty() && ui.loadedOnce && others.all { it.second.loadedOnce } && !loading
+    // With everything hidden it isn't "nothing found"; the show-hidden button covers that case.
+    val nothingFound = counts.isEmpty() && hidden.isEmpty() && q.isEmpty() && ui.loadedOnce && others.all { it.second.loadedOnce } && !loading
 
     ScreenScaffold(
         title = "Tugma",
@@ -162,6 +232,18 @@ fun SpeakersScreen(
                     }
                 }
 
+                if ((h?.speakers?.count { !it.invisible } ?: 0) + rawOthers.sumOf { it.second.speakers.size } > 8 || vm.query.isNotEmpty()) {
+                    item(key = "search") {
+                        OutlinedTextField(
+                            value = vm.query,
+                            onValueChange = { vm.query = it },
+                            singleLine = true,
+                            label = { Text("Search speakers") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
                 if (showSonos && h != null) {
                     item { SectionLabel("Sonos") }
                     item {
@@ -174,7 +256,23 @@ fun SpeakersScreen(
                             }
                         }
                     }
-                    ui.error?.let { item { Banner("Refresh failed", it) } }
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = onGroups, modifier = Modifier.weight(1f)) { Text("Groups") }
+                            OutlinedButton(onClick = onScenes, modifier = Modifier.weight(1f)) { Text("Scenes") }
+                            val paused by vm.paused.collectAsState()
+                            if (paused.isEmpty()) OutlinedButton(onClick = vm::pauseAll, modifier = Modifier.weight(1f)) { Text("Pause all") }
+                            else OutlinedButton(onClick = vm::resumeAll, modifier = Modifier.weight(1f)) { Text("Resume") }
+                        }
+                    }
+                    ui.error?.let {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Banner("Refresh failed", it)
+                                OutlinedButton(onClick = onDiagnostics) { Text("Run diagnostics") }
+                            }
+                        }
+                    }
                     item {
                         Text(
                             "${h.speakers.count { !it.invisible }} rooms · ${h.speakers.size} players · read from ${h.source}",
@@ -182,7 +280,7 @@ fun SpeakersScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    items(h.speakers.filter { !it.invisible }, key = { it.uuid }) { s ->
+                    items(h.speakers.filter { !it.invisible && visible(Brand.SONOS, it.uuid) && matches(it.roomName, it.modelName, it.host) }, key = { it.uuid }) { s ->
                         SpeakerCard(
                             s, h,
                             onOpen = { onOpen(Brand.SONOS, s.uuid) },
@@ -190,6 +288,7 @@ fun SpeakersScreen(
                             onRemoveSatellite = { sat -> vm.planRemoveSatellite(s, sat, h) },
                             onPair = { onPair(s.uuid) },
                             onHomeTheater = { onHomeTheater(s.uuid) },
+                            nowPlaying = h.coordinatorOf(s.uuid)?.uuid?.let { liveLines[it] ?: vm.nowPlaying[it] },
                         )
                     }
                 }
@@ -200,21 +299,45 @@ fun SpeakersScreen(
                         item(key = "note-$brand") {
                             Text(sectionNote(brand), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        if (brand == Brand.LINKPLAY) {
+                            item(key = "lp-groups") {
+                                FilledTonalButton(onClick = onLinkplayGroups, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.Outlined.SpeakerGroup, null, Modifier.size(18.dp)); Spacer(Modifier.size(6.dp)); Text("Groups & stereo pairs")
+                                }
+                            }
+                        }
                         items(st.speakers, key = { "$brand-" + it.id }) { s -> SummaryCard(s, onOpen = { onOpen(brand, s.id) }) }
                     }
+                }
+
+                if (q.isNotEmpty() && counts.isEmpty()) {
+                    item(key = "no-match") { Text("No speakers match \"${vm.query.trim()}\".", style = MaterialTheme.typography.bodyMedium) }
+                }
+
+                if (hidden.isNotEmpty()) {
+                    item(key = "hidden-toggle") {
+                        TextButton(onClick = { vm.showHidden = !vm.showHidden }) {
+                            Text(if (vm.showHidden) "Hide the ${hidden.size} hidden speakers" else "Show ${hidden.size} hidden speakers")
+                        }
+                    }
+                }
+
+                if (counts.values.sum() > 1) {
+                    item(key = "mixer") { TextButton(onClick = onMixer) { Text("Volume mixer: every speaker on one screen") } }
                 }
 
                 if (nothingFound) {
                     item {
                         EmptyState(
                             title = "No speakers found",
-                            body = "Tugma searches your Wi-Fi with SSDP. If nothing shows up, your router may block multicast. Add a Sonos speaker by its IP address instead (shown in the Sonos app under About My System).",
+                            body = "Tugma searches your Wi-Fi with SSDP. If nothing shows up, your router may block multicast. Add a speaker by its IP address instead (for Sonos, shown in the Sonos app under About My System).",
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 FilledTonalButton(onClick = { addHost = true }) { Text("Add by IP") }
                                 if (!demo) OutlinedButton(onClick = vm::startDemo) { Text("Try demo") }
                             }
+                            TextButton(onClick = onDiagnostics) { Text("Why? Run diagnostics") }
                         }
                     }
                 }
@@ -252,12 +375,14 @@ private fun SummaryCard(s: SpeakerSummary, onOpen: () -> Unit) {
 private fun sectionTitle(brand: Brand): String = when (brand) {
     Brand.UPNP -> "Other Wi-Fi speakers · UPnP/DLNA"
     Brand.CAST -> "Google Cast"
+    Brand.LINKPLAY -> "Linkplay · Arylic, WiiM, Audio Pro…"
     else -> brand.displayName
 }
 
 private fun sectionNote(brand: Brand): String = when (brand) {
     Brand.UPNP -> "Volume and playback only. These makers don't expose pairing over the network."
     Brand.CAST -> "Speakers and displays with Chromecast built-in. Volume and playback only; groups and stereo pairs can only be made in Google Home."
+    Brand.LINKPLAY -> "Volume and playback, multiroom groups across models, and experimental left/right stereo pairs."
     else -> ""
 }
 
@@ -292,6 +417,7 @@ private fun SpeakerCard(
     onRemoveSatellite: (String) -> Unit,
     onPair: () -> Unit,
     onHomeTheater: () -> Unit,
+    nowPlaying: String? = null,
 ) {
     Card(onClick = onOpen, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -309,6 +435,7 @@ private fun SpeakerCard(
             Text(s.uuid, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
             s.describeError?.let { Text("Couldn't read model: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             s.roleLabel?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            nowPlaying?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 1) }
 
             val bonded = bondedMembers(s, h)
             if (bonded.isNotEmpty()) {
@@ -363,7 +490,7 @@ private fun AddHostDialog(onAdd: (String) -> Unit, onDismiss: () -> Unit) {
         title = { Text("Add speaker by IP") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Any one speaker is enough; Tugma reads the rest of the household from it.", style = MaterialTheme.typography.bodyMedium)
+                Text("For Sonos, any one speaker is enough; Tugma reads the rest of the household from it. Linkplay and Google Cast speakers are added one address at a time.", style = MaterialTheme.typography.bodyMedium)
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },

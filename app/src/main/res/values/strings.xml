@@ -1,3 +1,10 @@
 <resources>
     <string name="app_name">Tugma</string>
+    <string name="eq_tile_label">Tugma EQ</string>
+    <string name="widget_pick">Pick a speaker in Tugma</string>
+    <string name="widget_description">Play, pause and volume for one speaker</string>
+    <string name="widget_play_pause">Play or pause</string>
+    <string name="widget_next">Next</string>
+    <string name="widget_volume_down">Volume down</string>
+    <string name="widget_volume_up">Volume up</string>
 </resources>

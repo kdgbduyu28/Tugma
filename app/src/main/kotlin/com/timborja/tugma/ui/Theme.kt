@@ -40,7 +40,21 @@ private val Dark = darkColorScheme(
     surfaceContainerHigh = Color(0xFF262A28),
 )
 
+enum class ThemeMode(val label: String) { SYSTEM("System"), LIGHT("Light"), DARK("Dark") }
+
+/** [mode] picks light/dark; [wallpaperColors] uses Material You colours on Android 12+. */
 @Composable
-fun TugmaTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light, content = content)
+fun TugmaTheme(mode: ThemeMode = ThemeMode.SYSTEM, wallpaperColors: Boolean = false, content: @Composable () -> Unit) {
+    val dark = when (mode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+    val scheme = if (wallpaperColors && android.os.Build.VERSION.SDK_INT >= 31) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        if (dark) androidx.compose.material3.dynamicDarkColorScheme(context) else androidx.compose.material3.dynamicLightColorScheme(context)
+    } else {
+        if (dark) Dark else Light
+    }
+    MaterialTheme(colorScheme = scheme, content = content)
 }

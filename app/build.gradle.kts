@@ -45,6 +45,7 @@ dependencies {
     implementation(project(":cast-core"))
     implementation(project(":eq-core"))
     implementation(project(":bt-core"))
+    implementation(project(":linkplay-core"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -9,7 +9,20 @@ import com.timborja.tugma.core.SpeakerSource
 import com.timborja.tugma.sonos.Endpoint
 import com.timborja.tugma.sonos.HouseholdState
 import com.timborja.tugma.sonos.NoSpeakersFoundException
+import com.timborja.tugma.sonos.SonosAlarms
 import com.timborja.tugma.sonos.SonosClient
+import com.timborja.tugma.sonos.roomGroups
+import com.timborja.tugma.upnp.dlna.NowPlaying
+import com.timborja.tugma.sonos.pauseAllGroups
+import com.timborja.tugma.sonos.resume
+import com.timborja.tugma.sonos.SonosFavorites
+import com.timborja.tugma.sonos.SonosInputs
+import com.timborja.tugma.sonos.SonosPlayer
+import com.timborja.tugma.sonos.SonosQueue
+import com.timborja.tugma.sonos.SonosSettings
+import com.timborja.tugma.sonos.SonosSleepTimer
+import com.timborja.tugma.sonos.SonosGroupVolume
+import com.timborja.tugma.sonos.SonosSound
 import com.timborja.tugma.sonos.SonosHousehold
 import com.timborja.tugma.sonos.SonosSpeaker
 import com.timborja.tugma.sonos.TopologySnapshot
@@ -74,6 +87,80 @@ class SonosRepository(
         return client().playback(speaker.endpoint, coordinator.endpoint)
     }
 
+    /** Sound settings on a visible room (a bond's left speaker or soundbar applies them to the whole bond). */
+    fun sound(id: String): SonosSound? {
+        val s = _state.value.household?.speaker(id)?.takeIf { !it.invisible } ?: return null
+        return client().sound(s.endpoint)
+    }
+
+    /** Volume for the whole group [id] belongs to, sent to its coordinator. */
+    fun groupVolume(id: String): SonosGroupVolume? {
+        val h = _state.value.household ?: return null
+        return h.coordinatorOf(id)?.let { client().groupVolume(it.endpoint) }
+    }
+
+    /** Any visible player, for household-wide services (alarms, favorites). */
+    private fun anyPlayer(): SonosSpeaker? = _state.value.household?.speakers?.firstOrNull { !it.invisible }
+
+    fun alarms(): SonosAlarms? = anyPlayer()?.let { client().alarms(it.endpoint) }
+    fun favorites(): SonosFavorites? = anyPlayer()?.let { client().favorites(it.endpoint) }
+
+    /** Plays on [id]'s group coordinator. */
+    fun player(id: String): SonosPlayer? = _state.value.household?.coordinatorOf(id)?.let { client().player(it.endpoint, it.uuid) }
+    fun queue(id: String): SonosQueue? = _state.value.household?.coordinatorOf(id)?.let { client().queue(it.endpoint, it.uuid) }
+    fun inputs(id: String): SonosInputs? = _state.value.household?.coordinatorOf(id)?.let { client().inputs(it.endpoint) }
+
+    /** Settings on the visible player itself (a pair's left speaker applies them to the pair). */
+    fun settings(id: String): SonosSettings? =
+        _state.value.household?.speaker(id)?.takeIf { !it.invisible }?.let { client().settings(it.endpoint) }
+
+    fun sleepTimer(id: String): SonosSleepTimer? = _state.value.household?.coordinatorOf(id)?.let { client().sleepTimer(it.endpoint) }
+
+    /** What each group plays, keyed by coordinator UUID. Light: two requests per group. */
+    suspend fun nowPlaying(): Map<String, NowPlaying> {
+        val h = _state.value.household ?: return emptyMap()
+        return h.roomGroups().mapNotNull { g ->
+            runCatching { g.coordinator.uuid to client().playback(g.coordinator.endpoint, g.coordinator.endpoint).nowPlaying() }.getOrNull()
+        }.toMap()
+    }
+
+    /** Event URLs for live updates: AVTransport on the group coordinator, RenderingControl on the speaker. Null in demo mode. */
+    fun eventUrls(id: String): Pair<String, String>? {
+        if (demo) return null
+        val h = _state.value.household ?: return null
+        val speaker = h.speaker(id)?.takeIf { !it.invisible } ?: return null
+        val coordinator = h.coordinatorOf(id) ?: speaker
+        return coordinator.endpoint.baseUrl + AVT_EVENT to speaker.endpoint.baseUrl + RC_EVENT
+    }
+
+    /** GroupRenderingControl event URL per multi-room group's coordinator. Empty in demo mode. */
+    fun groupVolumeEventUrls(): Map<String, String> {
+        if (demo) return emptyMap()
+        val h = _state.value.household ?: return emptyMap()
+        return h.roomGroups().filter { it.members.isNotEmpty() }
+            .associate { it.coordinator.uuid to it.coordinator.endpoint.baseUrl + "/MediaRenderer/GroupRenderingControl/Event" }
+    }
+
+    /** AVTransport event URL per group coordinator, for live now-playing. Empty in demo mode. */
+    fun coordinatorEventUrls(): Map<String, String> {
+        if (demo) return emptyMap()
+        val h = _state.value.household ?: return emptyMap()
+        return h.roomGroups().associate { it.coordinator.uuid to it.coordinator.endpoint.baseUrl + AVT_EVENT }
+    }
+
+    /** Groups the last "Pause all" stopped, so "Resume" restarts only those. */
+    private val _paused = MutableStateFlow<List<SonosSpeaker>>(emptyList())
+    val paused: StateFlow<List<SonosSpeaker>> = _paused.asStateFlow()
+
+    /** Pauses every playing group; returns how many. */
+    suspend fun pauseAll(): Int {
+        val h = _state.value.household ?: return 0
+        _paused.value = client().pauseAllGroups(h)
+        return _paused.value.size
+    }
+
+    suspend fun resumePaused(): Int = client().resume(_paused.value).also { _paused.value = emptyList() }
+
     private val demo get() = settings.demoMode.value
     private fun transport(): HttpTransport = if (demo) LoggingTransport(fake, log) else realTransport
     private fun client() = SonosClient(transport())
@@ -119,6 +206,11 @@ class SonosRepository(
         val result = runCatching { client().execute(confirmed) }.map { }
         refresh()
         return result.recoverCatching { throw IllegalStateException(describe(it), it) }
+    }
+
+    private companion object {
+        const val AVT_EVENT = "/MediaRenderer/AVTransport/Event"
+        const val RC_EVENT = "/MediaRenderer/RenderingControl/Event"
     }
 
     private fun parseEndpoint(value: String): Endpoint {

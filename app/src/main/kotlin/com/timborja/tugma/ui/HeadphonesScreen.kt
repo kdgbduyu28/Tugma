@@ -68,6 +68,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.timborja.tugma.AppContainer
 import com.timborja.tugma.data.BtAudioDevice
+import com.timborja.tugma.data.RedmiBudsRepository
 import com.timborja.tugma.eq.EqLibrary
 import com.timborja.tugma.eq.EqMath
 import com.timborja.tugma.eq.EqProfile
@@ -81,6 +82,7 @@ class HeadphonesViewModel(private val c: AppContainer) : ViewModel() {
     val bluetooth = c.bluetooth.state
     val demo = c.settings.demoMode
     fun isSoundcore(name: String) = c.soundcore.isLikelySoundcore(name)
+    fun isRedmi(name: String) = c.redmi.isLikely(name)
     val demoSoundcore = c.soundcore.demoCandidate
     val output = c.output.current
     val library = c.eq.library
@@ -167,7 +169,11 @@ class HeadphonesViewModel(private val c: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HeadphonesScreen(onSoundcore: (address: String, name: String) -> Unit) {
+fun HeadphonesScreen(
+    onSoundcore: (address: String, name: String) -> Unit,
+    onRedmi: (address: String, name: String) -> Unit,
+    onLab: () -> Unit,
+) {
     val vm = containerViewModel { HeadphonesViewModel(it) }
     val demo by vm.demo.collectAsState()
     val bt by vm.bluetooth.collectAsState()
@@ -294,6 +300,13 @@ fun HeadphonesScreen(onSoundcore: (address: String, name: String) -> Unit) {
                     }
                     TextButton(onClick = { onSoundcore(d.address, d.name) }) { Text("Settings") }
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(RedmiBudsRepository.DEMO_NAME, style = MaterialTheme.typography.bodyLarge)
+                        Text("Demo device: fake Redmi Buds, including the pairing handshake", style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(onClick = { onRedmi(RedmiBudsRepository.DEMO_ADDRESS, RedmiBudsRepository.DEMO_NAME) }) { Text("Settings") }
+                }
             }
             when {
                 !bt.permissionGranted && Build.VERSION.SDK_INT >= 31 -> {
@@ -303,9 +316,21 @@ fun HeadphonesScreen(onSoundcore: (address: String, name: String) -> Unit) {
                 !bt.adapterOn -> Text("Bluetooth is off.", style = MaterialTheme.typography.bodyMedium)
                 bt.devices.isEmpty() -> Text("No paired audio devices.", style = MaterialTheme.typography.bodyMedium)
                 else -> bt.devices.forEach { d ->
-                    DeviceRow(d, lib, soundcore = vm.isSoundcore(d.name), onSoundcore = { onSoundcore(d.address, d.name) }) { id -> vm.assign(d.eqKey, id, d.name) }
+                    DeviceRow(
+                        d, lib,
+                        soundcore = vm.isSoundcore(d.name), onSoundcore = { onSoundcore(d.address, d.name) },
+                        redmi = vm.isRedmi(d.name), onRedmi = { onRedmi(d.address, d.name) },
+                    ) { id -> vm.assign(d.eqKey, id, d.name) }
                 }
             }
+
+            SectionLabel("Other devices")
+            Text(
+                "SoundPEATS, Moondrop or something else Tugma doesn't know yet? The protocol lab lets you explore it and import captures of its official app.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onLab) { Text("Open protocol lab") }
 
             // Codec: read-only and honest about it.
             SectionLabel("Codec")
@@ -428,7 +453,15 @@ private fun ProfileMenu(label: String, lib: EqLibrary, includeDefault: Boolean, 
 }
 
 @Composable
-private fun DeviceRow(d: BtAudioDevice, lib: EqLibrary, soundcore: Boolean, onSoundcore: () -> Unit, onAssign: (String?) -> Unit) {
+private fun DeviceRow(
+    d: BtAudioDevice,
+    lib: EqLibrary,
+    soundcore: Boolean,
+    onSoundcore: () -> Unit,
+    redmi: Boolean,
+    onRedmi: () -> Unit,
+    onAssign: (String?) -> Unit,
+) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(
             when (d.kind) {
@@ -448,6 +481,7 @@ private fun DeviceRow(d: BtAudioDevice, lib: EqLibrary, soundcore: Boolean, onSo
             Text("EQ: ${lib.profileFor(d.eqKey).name}", style = MaterialTheme.typography.bodySmall)
             Text(d.address, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (soundcore) TextButton(onClick = onSoundcore) { Text("Soundcore settings") }
+            if (redmi) TextButton(onClick = onRedmi) { Text("Redmi Buds settings") }
         }
         ProfileMenu("EQ", lib, includeDefault = true, onPick = onAssign)
     }

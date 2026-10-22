@@ -22,6 +22,19 @@ data class LogEntry(
 ) {
     val isError: Boolean get() = error != null || (status != null && status >= 400)
 
+    /** The same request as a curl command, for replaying it from a computer. Null for non-HTTP entries (Cast). */
+    fun toCurl(): String? {
+        if (method != "GET" && method != "POST") return null
+        fun q(v: String) = "'" + v.replace("'", "'\\''") + "'"
+        return buildString {
+            append("curl -sS")
+            if (method == "POST") append(" -X POST")
+            requestHeaders.forEach { (k, v) -> append(" -H ").append(q("$k: $v")) }
+            if (method == "POST" && requestBody.isNotEmpty()) append(" --data ").append(q(requestBody))
+            append(' ').append(q(url))
+        }
+    }
+
     fun toText(): String = buildString {
         appendLine("── $method $url")
         appendLine("time: $timestampMillis  duration: ${durationMillis}ms  status: ${status ?: "-"}")

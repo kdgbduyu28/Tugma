@@ -10,7 +10,13 @@ import com.timborja.tugma.cast.TlsCastConnector
 import com.timborja.tugma.data.BluetoothRepository
 import com.timborja.tugma.data.CastRepository
 import com.timborja.tugma.data.DlnaRepository
+import com.timborja.tugma.data.EventHub
+import com.timborja.tugma.data.LinkplayRepository
+import com.timborja.tugma.data.SceneStore
+import com.timborja.tugma.data.StationsStore
+import com.timborja.tugma.linkplay.LinkplayHttp
 import com.timborja.tugma.data.NsdCastDiscoverer
+import com.timborja.tugma.data.RedmiBudsRepository
 import com.timborja.tugma.data.MulticastLockDiscoverer
 import com.timborja.tugma.data.NetworkMonitor
 import com.timborja.tugma.data.Settings
@@ -33,6 +39,8 @@ class AppContainer(context: Context) {
     val network = NetworkMonitor(context)
     val snapshots = SnapshotStore(context)
     private val lanTransport = LoggingTransport(LanOnlyTransport(OkHttpTransport()), log)
+    /** Live UPnP event subscriptions (Sonos speaker screen). */
+    val events = EventHub(context, lanTransport)
     val sonos = SonosRepository(
         settings = settings,
         log = log,
@@ -54,13 +62,24 @@ class AppContainer(context: Context) {
         realDiscoverer = NsdCastDiscoverer(context),
     )
 
+    val linkplay = LinkplayRepository(
+        settings = settings,
+        log = log,
+        // Accepts WiiM's self-signed HTTPS; LanOnlyTransport keeps it to private-network hosts.
+        realTransport = LoggingTransport(LanOnlyTransport(OkHttpTransport(LinkplayHttp.lanClient())), log),
+        realDiscoverer = MulticastLockDiscoverer(context, SsdpDiscoverer(UpnpServices.MEDIA_RENDERER_ST)),
+    )
+
     val bluetooth = BluetoothRepository(context)
     val eq = EqRepository(context)
+    val stations = StationsStore(context)
+    val scenes = SceneStore(context)
     val output = OutputMonitor(context)
     val soundcore = SoundcoreRepository(context, log)
+    val redmi = RedmiBudsRepository(context, log)
 
-    /** Every brand's speakers. New adapters (Linkplay…) get added here. */
-    val sources: List<SpeakerSource> = listOf(sonos, dlna, cast)
+    /** Every brand's speakers. New adapters get added here. */
+    val sources: List<SpeakerSource> = listOf(sonos, linkplay, dlna, cast)
 
     fun source(brand: Brand): SpeakerSource? = sources.firstOrNull { it.brand == brand }
 
@@ -70,12 +89,14 @@ class AppContainer(context: Context) {
         sonos.clear()
         dlna.clear()
         cast.clear()
+        linkplay.clear()
     }
 
     fun resetDemo() {
         sonos.resetDemo()
         dlna.resetDemo()
         cast.resetDemo()
+        linkplay.resetDemo()
     }
 }
 

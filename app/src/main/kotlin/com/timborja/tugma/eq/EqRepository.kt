@@ -70,6 +70,8 @@ class EqRepository(private val context: Context) {
 
     fun save(profile: EqProfile) = edit { it.upsert(profile) }
     fun delete(id: String) = edit { it.remove(id) }
+    /** Replaces every profile and assignment (backup restore). */
+    fun replaceLibrary(library: EqLibrary) = edit { library }
     fun assign(deviceKey: String, profileId: String?) = edit { it.assign(deviceKey, profileId) }
     fun setDefault(profileId: String) = edit { it.copy(defaultProfileId = profileId) }
 

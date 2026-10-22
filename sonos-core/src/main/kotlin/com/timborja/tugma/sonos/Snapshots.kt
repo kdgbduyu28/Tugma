@@ -35,13 +35,29 @@ object RestorePlanner {
     fun diff(snapshot: TopologySnapshot, current: HouseholdState): List<RoleChange> {
         val now = current.speakers.associateBy { it.uuid }
         val then = snapshot.speakers.associateBy { it.uuid }
-        return (then.keys + now.keys).mapNotNull { uuid ->
+        val bonds = (then.keys + now.keys).mapNotNull { uuid ->
             val before = then[uuid]?.role
             val after = now[uuid]?.roleLabel
             if (before == after) null
             else RoleChange(uuid, now[uuid]?.roomName ?: then[uuid]?.room ?: uuid, before, after)
         }
+        val old = Topology.parse(snapshot.rawZoneGroupState)
+        val groups = groupMoves(old, current).map { (s, was, nowLeader) ->
+            fun label(leader: String?, names: (String) -> String) = leader?.let { "Grouped with ${names(it)}" } ?: "Not grouped"
+            RoleChange(s.uuid, s.roomName, label(was) { old.member(it)?.zoneName ?: it }, label(nowLeader, current::nameOf))
+        }
+        return bonds + groups
     }
+
+    /** Rooms whose group leader differs from the snapshot: (room, leader then, leader now). Null leader = not grouped. */
+    private fun groupMoves(old: Topology, current: HouseholdState): List<Triple<SonosSpeaker, String?, String?>> =
+        current.speakers.filter(SonosGroupRules::canGroup).mapNotNull { s ->
+            val m = old.member(s.uuid) ?: return@mapNotNull null
+            if (m.invisible || m.isSatellite) return@mapNotNull null
+            val was = old.groupOf(s.uuid)?.coordinator?.takeIf { it != s.uuid }
+            val now = current.topology.groupOf(s.uuid)?.coordinator?.takeIf { it != s.uuid }
+            if (was == now) null else Triple(s, was, now)
+        }
 
     /** Returns null when nothing differs. Removals run before additions. */
     fun plan(snapshot: TopologySnapshot, current: HouseholdState): CommandPlan? {
@@ -97,10 +113,29 @@ object RestorePlanner {
             }
         }
 
+        // 3. Multiroom groups: leaves first, then joins to the snapshot's leaders.
+        val leaves = mutableListOf<SonosSpeaker>()
+        val joins = linkedMapOf<String, MutableList<SonosSpeaker>>()
+        for ((s, was, _) in groupMoves(old, current)) {
+            if (was == null) { leaves += s; continue }
+            val leader = current.speaker(was)
+            if (leader == null || !SonosGroupRules.canGroup(leader)) {
+                warnings += "Can't regroup ${s.roomName}: ${old.member(was)?.zoneName ?: "its old group leader"} isn't available."
+            } else {
+                joins.getOrPut(was) { mutableListOf() } += s
+            }
+        }
+        for (leaderUuid in joins.keys) {
+            val leader = current.speaker(leaderUuid) ?: continue
+            if (current.topology.groupOf(leaderUuid)?.coordinator != leaderUuid && leaves.none { it.uuid == leaderUuid }) leaves += leader
+        }
+        if (leaves.isNotEmpty()) requests += SonosGroupPlanner.leave(leaves).requests
+        joins.forEach { (leaderUuid, members) -> requests += SonosGroupPlanner.join(current.speaker(leaderUuid)!!, members, current).requests }
+
         if (requests.isEmpty()) return null
         return CommandPlan(
             title = "Restore snapshot: ${snapshot.reason}",
-            summary = "Puts bonds back the way they were before \"${snapshot.reason}\".",
+            summary = "Puts bonds and multiroom groups back the way they were before \"${snapshot.reason}\".",
             requests = requests.distinctBy { it.url + it.body },
             warnings = warnings + "Restores are best-effort. Review each step; Trueplay tuning may need redoing.",
         )

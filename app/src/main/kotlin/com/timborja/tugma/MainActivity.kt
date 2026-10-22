@@ -2,8 +2,10 @@ package com.timborja.tugma
 
 import android.net.Uri
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.collectAsState
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -29,10 +31,19 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.timborja.tugma.core.Brand
+import com.timborja.tugma.lab.ProtocolLabScreen
+import com.timborja.tugma.remote.VolumeKeys
+import com.timborja.tugma.diag.DiagnosticsScreen
 import com.timborja.tugma.ui.AboutScreen
 import com.timborja.tugma.ui.DebugScreen
 import com.timborja.tugma.ui.HeadphonesScreen
 import com.timborja.tugma.ui.HomeTheaterScreen
+import com.timborja.tugma.ui.LinkplayScreen
+import com.timborja.tugma.ui.ScenesScreen
+import com.timborja.tugma.ui.VolumeMixerScreen
+import com.timborja.tugma.ui.SonosAlarmsScreen
+import com.timborja.tugma.ui.SonosGroupsScreen
+import com.timborja.tugma.ui.RedmiBudsScreen
 import com.timborja.tugma.ui.SnapshotDetailScreen
 import com.timborja.tugma.ui.SnapshotsScreen
 import com.timborja.tugma.ui.SoundcoreScreen
@@ -45,7 +56,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { TugmaTheme { TugmaNav() } }
+        val settings = (application as TugmaApp).container.settings
+        setContent {
+            val mode by settings.theme.collectAsState()
+            val wallpaper by settings.wallpaperColors.collectAsState()
+            TugmaTheme(mode, wallpaper) { TugmaNav() }
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_VOLUME_UP -> VolumeKeys.dispatch(up = true) || super.onKeyDown(keyCode, event)
+        KeyEvent.KEYCODE_VOLUME_DOWN -> VolumeKeys.dispatch(up = false) || super.onKeyDown(keyCode, event)
+        else -> super.onKeyDown(keyCode, event)
     }
 
     override fun onStart() {
@@ -68,6 +90,12 @@ private val tabs = listOf(
 
 @Composable
 private fun TugmaNav() {
+    val container = (androidx.compose.ui.platform.LocalContext.current.applicationContext as TugmaApp).container
+    val welcomed by container.settings.welcomed.collectAsState()
+    if (!welcomed) {
+        com.timborja.tugma.ui.WelcomeScreen(container)
+        return
+    }
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
@@ -100,9 +128,15 @@ private fun TugmaNav() {
                 SpeakersScreen(
                     onPair = { left -> nav.navigate("pair" + (left?.let { "?left=$it" } ?: "")) },
                     onHomeTheater = { bar -> nav.navigate("ht" + (bar?.let { "?bar=$it" } ?: "")) },
+                    onGroups = { nav.navigate("groups") },
                     onOpen = { brand, id -> nav.navigate("speaker/${brand.name}/${Uri.encode(id)}") },
+                    onLinkplayGroups = { nav.navigate("linkplay") },
+                    onScenes = { nav.navigate("scenes") },
+                    onDiagnostics = { nav.navigate("diagnostics") },
+                    onMixer = { nav.navigate("mixer") },
                 )
             }
+            composable("linkplay") { LinkplayScreen(onBack = { nav.popBackStack() }) }
             composable("speaker/{brand}/{id}") {
                 val brand = runCatching { Brand.valueOf(it.arguments?.getString("brand").orEmpty()) }.getOrDefault(Brand.SONOS)
                 SpeakerDetailScreen(
@@ -111,6 +145,8 @@ private fun TugmaNav() {
                     onBack = { nav.popBackStack() },
                     onPair = { left -> nav.navigate("pair?left=$left") },
                     onHomeTheater = { bar -> nav.navigate("ht?bar=$bar") },
+                    onGroups = { nav.navigate("groups") },
+                    onAlarms = { nav.navigate("alarms") },
                 )
             }
             composable(
@@ -124,7 +160,23 @@ private fun TugmaNav() {
             composable("snapshots") { SnapshotsScreen(onOpen = { id -> nav.navigate("snapshot/$id") }) }
             composable("snapshot/{id}") { SnapshotDetailScreen(it.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() }) }
             composable("headphones") {
-                HeadphonesScreen(onSoundcore = { address, name -> nav.navigate("soundcore/${Uri.encode(address)}/${Uri.encode(name)}") })
+                HeadphonesScreen(
+                    onSoundcore = { address, name -> nav.navigate("soundcore/${Uri.encode(address)}/${Uri.encode(name)}") },
+                    onRedmi = { address, name -> nav.navigate("redmibuds/${Uri.encode(address)}/${Uri.encode(name)}") },
+                    onLab = { nav.navigate("lab") },
+                )
+            }
+            composable("mixer") { VolumeMixerScreen(onBack = { nav.popBackStack() }) }
+            composable("scenes") { ScenesScreen(onBack = { nav.popBackStack() }) }
+            composable("alarms") { SonosAlarmsScreen(onBack = { nav.popBackStack() }) }
+            composable("groups") { SonosGroupsScreen(onBack = { nav.popBackStack() }) }
+            composable("lab") { ProtocolLabScreen(onBack = { nav.popBackStack() }) }
+            composable("redmibuds/{address}/{name}") {
+                RedmiBudsScreen(
+                    address = it.arguments?.getString("address").orEmpty(),
+                    name = it.arguments?.getString("name").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                )
             }
             composable("soundcore/{address}/{name}") {
                 SoundcoreScreen(
@@ -134,7 +186,8 @@ private fun TugmaNav() {
                 )
             }
             composable("debug") { DebugScreen() }
-            composable("about") { AboutScreen() }
+            composable("about") { AboutScreen(onDiagnostics = { nav.navigate("diagnostics") }) }
+            composable("diagnostics") { DiagnosticsScreen(onBack = { nav.popBackStack() }) }
         }
     }
 }

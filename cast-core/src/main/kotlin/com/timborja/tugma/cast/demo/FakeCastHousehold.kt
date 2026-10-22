@@ -51,6 +51,9 @@ class FakeCastHousehold(
 
     val devices: List<Device> = devices.toList()
 
+    /** contentId of the last LOAD, for test assertions. */
+    var lastLoaded: String? = null
+
     /** Every message type the fakes received, e.g. "SET_VOLUME", for test assertions. */
     val received = mutableListOf<String>()
 
@@ -102,6 +105,18 @@ class FakeCastHousehold(
 
         private fun receiver(type: String, json: JsonObject, id: Int?): JsonObject? = when (type) {
             "GET_STATUS" -> receiverStatus(id)
+            "LAUNCH" -> if (json["appId"]?.jsonPrimitive?.contentOrNull != "CC1AD845") {
+                error(id, "LAUNCH_ERROR")
+            } else {
+                d.app = App("CC1AD845", "Default Media Receiver", "web-launched", mediaNamespace = true, playerState = null)
+                receiverStatus(id)
+            }
+            "STOP" -> if (d.app == null || json["sessionId"]?.jsonPrimitive?.contentOrNull != "session-${d.app?.appId}") {
+                error(id, "INVALID_REQUEST")
+            } else {
+                d.app = null
+                receiverStatus(id)
+            }
             "SET_VOLUME" -> {
                 val v = json["volume"]?.jsonObject
                 v?.get("level")?.jsonPrimitive?.doubleOrNull?.let { d.level = it.coerceIn(0.0, 1.0) }
@@ -142,7 +157,14 @@ class FakeCastHousehold(
 
         private fun media(destination: String, type: String, json: JsonObject, id: Int?): JsonObject? {
             val a = d.app?.takeIf { it.transportId == destination && it.mediaNamespace } ?: return null
-            if (type != "GET_STATUS") {
+            if (type == "LOAD") {
+                val media = json["media"]?.jsonObject ?: return error(id, "LOAD_FAILED")
+                if (media["contentId"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) return error(id, "LOAD_FAILED")
+                a.title = media["metadata"]?.jsonObject?.get("title")?.jsonPrimitive?.contentOrNull
+                a.artist = null
+                a.playerState = "PLAYING"
+                lastLoaded = media["contentId"]?.jsonPrimitive?.contentOrNull
+            } else if (type != "GET_STATUS") {
                 val session = json["mediaSessionId"]?.jsonPrimitive?.intOrNull
                 if (session != a.mediaSessionId || a.playerState == null) return error(id, "INVALID_REQUEST")
                 when (type) {

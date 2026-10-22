@@ -28,6 +28,7 @@ data class SonosSpeaker(
     val isSub: Boolean,
     val softwareVersion: String?,
     val describeError: String? = null,
+    val hasLineIn: Boolean = false,
 ) {
     val endpoint: Endpoint get() = Endpoint(host, port)
 
@@ -159,6 +160,7 @@ class SonosHousehold(
                 isSub = info?.isSub ?: false,
                 softwareVersion = info?.softwareVersion ?: m.softwareVersion,
                 describeError = error,
+                hasLineIn = info?.hasLineIn ?: false,
             )
         }.sortedWith(compareBy({ it.roomName.lowercase() }, { it.invisible }))
         return HouseholdState(speakers, topology, source, clock())

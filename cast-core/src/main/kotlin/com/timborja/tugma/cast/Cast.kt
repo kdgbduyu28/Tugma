@@ -3,6 +3,7 @@ package com.timborja.tugma.cast
 import com.timborja.tugma.core.Brand
 import com.timborja.tugma.core.Capability
 import com.timborja.tugma.core.PlaybackControl
+import com.timborja.tugma.core.UrlPlayback
 import com.timborja.tugma.core.PlaybackStatus
 import com.timborja.tugma.core.SpeakerSummary
 import com.timborja.tugma.core.TransportState
@@ -47,6 +48,7 @@ data class CastDevice(
 
     companion object {
         const val GROUP_MODEL = "Google Cast Group"
+        const val BY_IP_MODEL = "Google Cast (added by IP)"
         const val DEFAULT_PORT = 8009
 
         /** Builds a device from an mDNS record's TXT attributes (`id`, `fn`, `md`, `rs`). */
@@ -65,6 +67,15 @@ data class CastDevice(
 }
 
 /** Platform discovery (Android's NsdManager in the app, a fake in tests/demo). */
+/**
+ * Checks that [host] speaks CASTV2, for devices added by IP when mDNS is blocked. The protocol
+ * doesn't carry a friendly name, so the device is labelled by its address.
+ */
+suspend fun CastClient.probe(host: String, port: Int = CastDevice.DEFAULT_PORT): CastDevice? = runCatching {
+    session(host, port) { request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, kotlinx.serialization.json.buildJsonObject { put("type", "GET_STATUS") }) }
+    CastDevice(id = "ip:$host:$port", name = "Cast device at $host", model = CastDevice.BY_IP_MODEL, host = host, port = port)
+}.getOrNull()
+
 fun interface CastDiscoverer {
     suspend fun discover(): List<CastDevice>
 }
@@ -75,6 +86,7 @@ data class CastApp(
     val statusText: String?,
     val transportId: String?,
     val namespaces: List<String>,
+    val sessionId: String? = null,
     val isIdleScreen: Boolean,
 ) {
     val supportsMedia: Boolean get() = CastNamespaces.MEDIA in namespaces && !isIdleScreen && transportId != null
@@ -101,6 +113,7 @@ object CastJson {
                 transportId = o.string("transportId"),
                 namespaces = (o["namespaces"] as? JsonArray).orEmpty().mapNotNull { it.jsonObject.string("name") },
                 isIdleScreen = o["isIdleScreen"]?.jsonPrimitive?.booleanOrNull ?: false,
+                sessionId = o.string("sessionId"),
             )
         }
         return ReceiverStatus(
@@ -139,7 +152,62 @@ object CastJson {
  * whatever app is casting. Apps that don't expose the media namespace (some music apps use their
  * own) can still have their volume changed but not their playback.
  */
-class CastPlayback(private val client: CastClient, private val host: String, private val port: Int) : PlaybackControl {
+class CastPlayback(private val client: CastClient, private val host: String, private val port: Int) : PlaybackControl, UrlPlayback {
+    /**
+     * Launches Google's Default Media Receiver if it isn't running, then LOADs the link with a
+     * title. Same flow as pychromecast `play_media`.
+     */
+    override suspend fun playUrl(url: String, title: String, live: Boolean) {
+        client.session(host, port) {
+            var receiver = CastJson.receiverStatus(request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, type("GET_STATUS")))
+            var app = receiver.apps.firstOrNull { it.appId == DEFAULT_MEDIA_RECEIVER && it.transportId != null }
+            if (app == null) {
+                receiver = CastJson.receiverStatus(
+                    request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, buildJsonObject { put("type", "LAUNCH"); put("appId", DEFAULT_MEDIA_RECEIVER) }),
+                )
+                app = receiver.apps.firstOrNull { it.appId == DEFAULT_MEDIA_RECEIVER && it.transportId != null }
+                    ?: throw CastException("The device didn't start the media receiver")
+            }
+            request(
+                CastNamespaces.MEDIA, app.transportId!!,
+                buildJsonObject {
+                    put("type", "LOAD")
+                    put("autoplay", true)
+                    put(
+                        "media",
+                        buildJsonObject {
+                            put("contentId", url.trim())
+                            put("contentUrl", url.trim())
+                            put("contentType", contentType(url))
+                            put("streamType", if (live) "LIVE" else "BUFFERED")
+                            put("metadata", buildJsonObject { put("metadataType", 0); put("title", title) })
+                        },
+                    )
+                },
+            )
+        }
+    }
+
+    /** Closes whatever app is casting (receiver STOP with its session), back to the idle screen. */
+    suspend fun stopCasting() {
+        client.session(host, port) {
+            val receiver = CastJson.receiverStatus(request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, type("GET_STATUS")))
+            val app = receiver.activeApp ?: throw CastException("Nothing is casting to this device")
+            val sessionId = app.sessionId ?: throw CastException("The casting app didn't report a session")
+            request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, buildJsonObject { put("type", "STOP"); put("sessionId", sessionId) })
+        }
+    }
+
+    private fun contentType(url: String): String = when (url.substringBefore('?').substringAfterLast('.', "").lowercase()) {
+        "aac" -> "audio/aac"
+        "m4a", "mp4" -> "audio/mp4"
+        "ogg", "opus" -> "audio/ogg"
+        "flac" -> "audio/flac"
+        "wav" -> "audio/wav"
+        "m3u8" -> "application/x-mpegURL"
+        else -> "audio/mpeg"
+    }
+
     override val capabilities: Set<Capability> = setOf(Capability.VOLUME, Capability.MUTE, Capability.TRANSPORT)
 
     override suspend fun status(): PlaybackStatus = client.session(host, port) {
@@ -216,6 +284,10 @@ class CastPlayback(private val client: CastClient, private val host: String, pri
     }
 
     private fun type(t: String) = buildJsonObject { put("type", JsonPrimitive(t)) }
+
+    companion object {
+        const val DEFAULT_MEDIA_RECEIVER = "CC1AD845"
+    }
 }
 
 private fun JsonArray?.orEmpty(): List<kotlinx.serialization.json.JsonElement> = this ?: emptyList()

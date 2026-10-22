@@ -61,7 +61,16 @@ class FakeRenderer(
         else -> FakeSoap.fault(401)
     }
 
-    fun avTransport(action: String): HttpResponse = when (action) {
+    /** Last URI set with SetAVTransportURI. */
+    var uri: String? = null
+
+    fun avTransport(action: String, arg: (String) -> String = { "" }): HttpResponse = when (action) {
+        "SetAVTransportURI" -> {
+            uri = arg("CurrentURI")
+            com.timborja.tugma.upnp.dlna.Didl.parse(arg("CurrentURIMetaData")).let { t -> title = t?.title; artist = t?.artist }
+            transport = "STOPPED"
+            FakeSoap.ok(avtService, action)
+        }
         "GetTransportInfo" -> FakeSoap.ok(
             avtService, action,
             mapOf("CurrentTransportState" to transport, "CurrentTransportStatus" to "OK", "CurrentSpeed" to "1"),
@@ -134,7 +143,7 @@ class FakeDlnaHousehold(
                 }
                 request.method == "POST" && uri.path == "$prefix/upnp/control/avtransport1" -> {
                     val action = FakeSoap.action(request).also { receivedActions += it }
-                    r.avTransport(action)
+                    r.avTransport(action, FakeSoap.args(request))
                 }
                 else -> HttpResponse(404, "")
             }
@@ -144,7 +153,7 @@ class FakeDlnaHousehold(
     private fun description(d: Device): String {
         val rc = if (d.hasRenderingControl) """
             <service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
-              <controlURL>upnp/control/rendercontrol1</controlURL><SCPDURL>rcs.xml</SCPDURL></service>""" else ""
+              <controlURL>upnp/control/rendercontrol1</controlURL><eventSubURL>upnp/event/rendercontrol1</eventSubURL><SCPDURL>rcs.xml</SCPDURL></service>""" else ""
         val services = """<serviceList>$rc
             <service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
               <controlURL>upnp/control/avtransport1</controlURL><SCPDURL>avts.xml</SCPDURL></service>
