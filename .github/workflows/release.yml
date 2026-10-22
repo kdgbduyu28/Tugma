@@ -1,0 +1,76 @@
+name: Release
+
+# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to build the APK and
+# publish it as a GitHub Release you can download straight to a phone.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-36 build-tools;35.0.0
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Unit tests
+        run: ./gradlew test
+
+      # Debug-signed, so it installs without a release keystore. Fine for sideloading;
+      # Play Protect may call it unrecognised.
+      - name: Build APK
+        run: ./gradlew :app:assembleDebug
+
+      - name: Name the APK after the tag
+        run: cp app/build/outputs/apk/debug/app-debug.apk "tugma-${GITHUB_REF_NAME}.apk"
+
+      - name: Write release notes
+        run: |
+          {
+            echo "## Install on your phone"
+            echo
+            echo "1. Open this page on your Android phone and tap **tugma-${GITHUB_REF_NAME}.apk** below."
+            echo "2. When asked, allow your browser to install unknown apps, then tap **Install**."
+            echo "3. If Play Protect says the app is unrecognised, tap **Install anyway** (it's a debug-signed build)."
+            echo
+            echo "Unofficial, not affiliated with any speaker maker. Untested on real hardware so far: start with **About → Run diagnostics**."
+            echo
+            if [ -f CHANGELOG.md ]; then cat CHANGELOG.md; fi
+          } > release-notes.md
+
+      # The gh CLI is preinstalled on GitHub's runners; GITHUB_TOKEN is enough to publish.
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "tugma-${GITHUB_REF_NAME}.apk" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "tugma-${GITHUB_REF_NAME}.apk" \
+              --title "Tugma ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi

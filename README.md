@@ -65,6 +65,16 @@ Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400)
 
 The protocol modules are plain Kotlin/JVM with no Android dependencies.
 
+## Download
+
+Get the latest APK from [Releases](https://github.com/kdgbduyu28/Tugma/releases): open it on your phone and tap the `.apk`. It's a debug-signed build, so allow installs from your browser and, if Play Protect asks, tap **Install anyway**.
+
+New releases are built by GitHub Actions when a version tag is pushed:
+
+```bash
+git tag v0.1.1 && git push origin v0.1.1
+```
+
 ## Build
 
 ```bash
