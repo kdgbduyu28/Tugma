@@ -191,3 +191,46 @@ class LinkplayInputTest {
         assertFailsWith<IllegalStateException> { x.switchInput(LinkplayInput.OPTICAL) }
     }
 }
+
+class LinkplaySeekTest {
+    @Test
+    fun `position comes from curpos and totlen, seek fails on radio`() = runTest {
+        val fake = FakeLinkplayHousehold()
+        val client = LinkplayClient(fake)
+        val amp = LinkplayHousehold(client).load(fake.speakers.map { it.host }).first { it.name == "Kusina Amp" }
+        val p = client.playback(amp) as com.timborja.tugma.core.SeekablePlayback
+
+        val radio = p.position()!!
+        assertTrue(!radio.seekable)
+        assertTrue(runCatching { p.seek(30) }.isFailure)
+
+        fake.speakers.first { it.name == "Kusina Amp" }.lengthMs = 240_500
+        p.seek(30)
+        assertTrue(fake.commands.any { it.endsWith("setPlayerCmd:seek:30") })
+        assertEquals(com.timborja.tugma.core.MediaPosition(30, 240), p.position())
+    }
+}
+
+class LinkplayLoopTest {
+    @Test
+    fun `loop codes cover every shuffle and repeat combination`() {
+        val all = com.timborja.tugma.core.RepeatMode.entries.flatMap { r -> listOf(true, false).map { com.timborja.tugma.core.ShuffleRepeat(it, r) } }
+        assertEquals((0..5).toSet(), all.map(LinkplayLoop::code).toSet())
+        all.forEach { assertEquals(it, LinkplayLoop.parse(LinkplayLoop.code(it).toString())) }
+        assertNull(LinkplayLoop.parse("-1"))
+    }
+
+    @Test
+    fun `play mode reads loop and sends loopmode`() = runTest {
+        val fake = FakeLinkplayHousehold()
+        val client = LinkplayClient(fake)
+        val amp = LinkplayHousehold(client).load(fake.speakers.map { it.host }).first { it.name == "Kusina Amp" }
+        val p = client.playback(amp) as com.timborja.tugma.core.PlayModeControl
+        val shuffleOne = com.timborja.tugma.core.ShuffleRepeat(true, com.timborja.tugma.core.RepeatMode.ONE)
+
+        assertEquals(com.timborja.tugma.core.ShuffleRepeat(false, com.timborja.tugma.core.RepeatMode.ALL), p.playMode())
+        p.setPlayMode(shuffleOne)
+        assertTrue(fake.commands.any { it.endsWith("setPlayerCmd:loopmode:5") })
+        assertEquals(shuffleOne, p.playMode())
+    }
+}

@@ -7,6 +7,7 @@ import com.timborja.tugma.upnp.NotLocalNetworkException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -180,6 +181,40 @@ class CastPlayUrlTest {
         assertTrue("LAUNCH" !in fake.received)
         assertEquals("http://radio.example/a.mp3", fake.lastLoaded)
     }
+
+    @Test
+    fun `playUrl waits for a receiver that's slow to start`() = runTest {
+        fake.launchPolls = 3
+        playback("Opisina Display").playUrl("https://radio.example/hls/live.m3u8?token=1", "HLS FM")
+        assertEquals("https://radio.example/hls/live.m3u8?token=1", fake.lastLoaded)
+        val media = fake.lastLoadedMedia!!
+        assertEquals("application/x-mpegURL", media["contentType"]?.jsonPrimitive?.content)
+        assertEquals("LIVE", media["streamType"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `a failed load explains itself`() = runTest {
+        val e = assertFailsWith<CastException> { playback("Kwarto Speaker").playUrl("http://radio.example/station.pls", "Playlist") }
+        assertTrue("couldn't play that link" in e.message!!)
+    }
+}
+
+class CastMediaTest {
+    @Test
+    fun `content types by extension`() {
+        assertEquals("audio/mpeg", CastMedia.contentType("http://x/stream"))
+        assertEquals("audio/aac", CastMedia.contentType("http://x/live.AAC?sid=2"))
+        assertEquals("audio/ogg", CastMedia.contentType("http://x/a.opus"))
+        assertEquals("application/dash+xml", CastMedia.contentType("http://x/manifest.mpd#t=1"))
+        assertEquals("audio/mpeg", CastMedia.contentType("http://x.example/"), "a host's dot isn't an extension")
+    }
+
+    @Test
+    fun `load errors become readable`() {
+        assertTrue("couldn't play" in CastMedia.loadError("Cast device answered LOAD_FAILED: INVALID_COMMAND"))
+        assertTrue("Something else" in CastMedia.loadError("Cast device answered LOAD_CANCELLED"))
+        assertEquals("Socket closed", CastMedia.loadError("Socket closed"))
+    }
 }
 
 class CastProbeTest {
@@ -204,5 +239,27 @@ class CastStopTest {
         p.stopCasting()
         assertEquals(TransportState.NO_MEDIA, p.status().transport)
         assertTrue(runCatching { p.stopCasting() }.isFailure)
+    }
+}
+
+class CastSeekTest {
+    @Test
+    fun `seek moves within a loaded track, live streams have no length`() = runTest {
+        val fake = FakeCastHousehold()
+        val client = CastClient(fake, null, timeoutMillis = 2_000)
+        val d = fake.devices.first { it.info.name == "Kwarto Speaker" }.info
+        val p = CastPlayback(client, d.host, d.port)
+
+        assertEquals(com.timborja.tugma.core.MediaPosition(12, 180), p.position())
+        p.seek(90)
+        assertEquals(90, p.position()?.elapsedSeconds)
+        assertTrue("SEEK" in fake.received)
+
+        p.playUrl("https://radio.example/live.aac", "Live", live = true)
+        assertTrue(p.position()?.seekable == false)
+        assertFailsWith<CastException> { p.seek(10) }
+
+        val idle = fake.devices.first { it.info.name == "Opisina Display" }.info
+        assertNull(CastPlayback(client, idle.host, idle.port).position())
     }
 }

@@ -1,5 +1,6 @@
 package com.timborja.tugma
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
@@ -20,6 +21,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -31,6 +33,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.timborja.tugma.core.Brand
+import com.timborja.tugma.core.Shortcuts
 import com.timborja.tugma.lab.ProtocolLabScreen
 import com.timborja.tugma.remote.VolumeKeys
 import com.timborja.tugma.diag.DiagnosticsScreen
@@ -51,17 +54,36 @@ import com.timborja.tugma.ui.SpeakerDetailScreen
 import com.timborja.tugma.ui.SpeakersScreen
 import com.timborja.tugma.ui.StereoPairScreen
 import com.timborja.tugma.ui.TugmaTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
+    /** A speaker screen asked for by the widget or Quick Settings tile, not yet opened. */
+    private val pendingRoute = MutableStateFlow<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) takeRoute(intent)
         val settings = (application as TugmaApp).container.settings
         setContent {
             val mode by settings.theme.collectAsState()
             val wallpaper by settings.wallpaperColors.collectAsState()
-            TugmaTheme(mode, wallpaper) { TugmaNav() }
+            TugmaTheme(mode, wallpaper) { TugmaNav(pendingRoute) }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeRoute(intent)
+    }
+
+    /** The activity is exported (it's the launcher), so only speaker-screen routes are accepted. */
+    private fun takeRoute(intent: Intent?) {
+        intent?.getStringExtra(EXTRA_ROUTE)?.takeIf(Shortcuts::isSpeakerRoute)?.let { pendingRoute.value = it }
+    }
+
+    companion object {
+        const val EXTRA_ROUTE = "com.timborja.tugma.ROUTE"
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean = when (keyCode) {
@@ -89,7 +111,7 @@ private val tabs = listOf(
 )
 
 @Composable
-private fun TugmaNav() {
+private fun TugmaNav(pendingRoute: MutableStateFlow<String?>) {
     val container = (androidx.compose.ui.platform.LocalContext.current.applicationContext as TugmaApp).container
     val welcomed by container.settings.welcomed.collectAsState()
     if (!welcomed) {
@@ -100,6 +122,13 @@ private fun TugmaNav() {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     val showTabs = tabs.any { it.route == route }
+    val requested by pendingRoute.collectAsState()
+    LaunchedEffect(requested) {
+        requested?.let { r ->
+            pendingRoute.value = null
+            nav.navigate(r) { launchSingleTop = true }
+        }
+    }
 
     Scaffold(
         bottomBar = {

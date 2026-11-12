@@ -2,6 +2,7 @@ package com.timborja.tugma.sonos.demo
 
 import com.timborja.tugma.sonos.ChannelMap
 import com.timborja.tugma.sonos.SonosAlarm
+import com.timborja.tugma.sonos.PlayMode
 import com.timborja.tugma.sonos.SonosAlarms
 import com.timborja.tugma.sonos.SonosClient
 import com.timborja.tugma.sonos.SonosFavorite
@@ -55,6 +56,8 @@ class FakeSonosHousehold(
     private val locked = mutableMapOf<String, Boolean>()
     private val queues = mutableMapOf<String, MutableList<Pair<String, String>>>() // coordinator → (uri, metadata)
     private val sleepSeconds = mutableMapOf<String, Int>()
+    private val playModes = mutableMapOf<String, String>()
+    private val crossfade = mutableMapOf<String, Boolean>()
     private val alarms = mutableListOf<SonosAlarm>()
     private var nextAlarmId = 1
 
@@ -107,6 +110,7 @@ class FakeSonosHousehold(
             path == SonosClient.RC_CONTROL -> renderers.getValue(player.uuid).renderingControl(action, ::arg)
             path == SonosClient.AVT_CONTROL && action == "SetAVTransportURI" -> setUri(player, arg("CurrentURI"), arg("CurrentURIMetaData"))
             path == SonosClient.AVT_CONTROL && action in QUEUE_ACTIONS -> queueOrTimer(player, action, ::arg)
+            path == SonosClient.AVT_CONTROL && action in TRANSPORT_SETTINGS -> transportSettings(player, action, ::arg)
             path == SonosFavorites.CD_CONTROL -> browse(player, arg("ObjectID"))
             path == SonosAlarms.CONTROL -> alarmClock(action, ::arg)
             path == SonosClient.AVT_CONTROL && action == "BecomeCoordinatorOfStandaloneGroup" -> leave(player)
@@ -205,6 +209,9 @@ class FakeSonosHousehold(
             joins.remove(player.uuid)
             currentUri[player.uuid] = uri
             val r = renderers.getValue(player.uuid)
+            r.track = 1
+            r.elapsedSeconds = 0
+            r.durationSeconds = if (uri.startsWith("x-rincon-queue:")) TRACK_SECONDS else null
             when {
                 uri.startsWith("x-rincon-stream:") -> {
                     val src = players.firstOrNull { it.uuid == uri.removePrefix("x-rincon-stream:") }
@@ -247,20 +254,34 @@ class FakeSonosHousehold(
                 val q = queues[player.uuid]
                 if (n == null || q == null || n !in 1..q.size) fault(701) else { q.removeAt(n - 1); ok(svc, action) }
             }
-            "Seek" -> {
+            "Seek" -> if (arg("Unit") == "REL_TIME") renderers.getValue(player.uuid).avTransport(action, arg) else {
                 val q = queues[player.uuid].orEmpty()
                 val n = arg("Target").toIntOrNull()
                 if (arg("Unit") != "TRACK_NR" || n == null || n !in 1..q.size) fault(711)
-                else { Didl.parse(q[n - 1].second)?.let { t -> renderers.getValue(player.uuid).apply { title = t.title; artist = t.artist } }; ok(svc, action) }
+                else {
+                    renderers.getValue(player.uuid).apply {
+                        Didl.parse(q[n - 1].second)?.let { t -> title = t.title; artist = t.artist }
+                        track = n; elapsedSeconds = 0; durationSeconds = TRACK_SECONDS
+                    }
+                    ok(svc, action)
+                }
             }
             "AddURIToQueue" -> {
                 val q = queues.getOrPut(player.uuid) { mutableListOf() }
                 val uri = arg("EnqueuedURI")
                 val name = Didl.parse(arg("EnqueuedURIMetaData"))?.title ?: "Demo"
+                if (uri.isBlank() || STREAM_PREFIXES.any { uri.startsWith(it) }) return fault(714)
                 // Containers expand to a few made-up tracks, like a real album or playlist would.
-                if (uri.startsWith("x-rincon-cpcontainer:")) (1..3).forEach { n -> q += "$uri#$n" to didlItem("$name, track $n", "object.item.audioItem.musicTrack") }
-                else q += uri to arg("EnqueuedURIMetaData")
-                ok(svc, action, mapOf("FirstTrackNumberEnqueued" to q.size.toString(), "NumTracksAdded" to "1", "NewQueueLength" to q.size.toString()))
+                val added = if (uri.startsWith("x-rincon-cpcontainer:") || uri.startsWith("file:///jffs/settings/savedqueues.rsq")) {
+                    (1..3).map { n -> "$uri#$n" to didlItem("$name, track $n", "object.item.audioItem.musicTrack") }
+                } else {
+                    listOf(uri to arg("EnqueuedURIMetaData"))
+                }
+                // "As next" goes after the current track while the group plays from its queue.
+                val playingQueue = currentUri[player.uuid]?.startsWith("x-rincon-queue:") == true
+                val at = if (arg("EnqueueAsNext") == "1" && playingQueue) renderers.getValue(player.uuid).track.coerceAtMost(q.size) else q.size
+                q.addAll(at, added)
+                ok(svc, action, mapOf("FirstTrackNumberEnqueued" to (at + 1).toString(), "NumTracksAdded" to added.size.toString(), "NewQueueLength" to q.size.toString()))
             }
             "ConfigureSleepTimer" -> {
                 val v = arg("NewSleepTimerDuration")
@@ -275,6 +296,27 @@ class FakeSonosHousehold(
         }
     }
 
+    private fun transportSettings(player: Player, action: String, arg: (String) -> String): HttpResponse {
+        if (visiblePlayers().none { it.uuid == player.uuid } || coordinatorOf(player.uuid) != player.uuid) return fault(800)
+        val svc = SonosClient.AVT_SERVICE
+        return when (action) {
+            "GetTransportSettings" -> ok(svc, action, mapOf("PlayMode" to (playModes[player.uuid] ?: "NORMAL"), "RecQualityMode" to "NOT_IMPLEMENTED"))
+            // Like a real player: shuffle and repeat only apply to the queue.
+            "SetPlayMode" -> when {
+                currentUri[player.uuid]?.startsWith("x-rincon-queue:") != true -> fault(712)
+                PlayMode.parse(arg("NewPlayMode")) == null -> fault(402)
+                else -> { playModes[player.uuid] = arg("NewPlayMode"); ok(svc, action) }
+            }
+            "GetCrossfadeMode" -> ok(svc, action, mapOf("CrossfadeMode" to if (crossfade[player.uuid] == true) "1" else "0"))
+            "SetCrossfadeMode" -> arg("CrossfadeMode").takeIf { it == "0" || it == "1" }
+                ?.let { crossfade[player.uuid] = it == "1"; ok(svc, action) } ?: fault(402)
+            else -> fault(401)
+        }
+    }
+
+    /** Shuffle/repeat as the coordinator last accepted it, for test assertions. */
+    fun playMode(uuid: String): String = playModes[uuid] ?: "NORMAL"
+
     /** Tracks queued on a coordinator, for test assertions. */
     fun queue(uuid: String): List<String> = queues[uuid].orEmpty().map { it.first }
 
@@ -288,6 +330,16 @@ class FakeSonosHousehold(
                         "<dc:creator>Demo Artist</dc:creator><upnp:class>object.item.audioItem.musicTrack</upnp:class></item>"
                 }.joinToString("") + "</DIDL-Lite>"
             return ok(SonosFavorites.CD_SERVICE, "Browse", mapOf("Result" to didl, "NumberReturned" to q.size.toString(), "TotalMatches" to q.size.toString(), "UpdateID" to "1"))
+        }
+        if (objectId == "SQ:") {
+            val didl = "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" " +
+                "xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\">" +
+                SAVED_PLAYLISTS.entries.joinToString("") { (n, title) ->
+                    "<container id=\"SQ:$n\" parentID=\"SQ:\" restricted=\"true\"><dc:title>${Xml.escape(title)}</dc:title>" +
+                        "<res protocolInfo=\"file:*:audio/mpegurl:*\">file:///jffs/settings/savedqueues.rsq#$n</res>" +
+                        "<upnp:class>object.container.playlistContainer</upnp:class></container>"
+                } + "</DIDL-Lite>"
+            return ok(SonosFavorites.CD_SERVICE, "Browse", mapOf("Result" to didl, "NumberReturned" to SAVED_PLAYLISTS.size.toString(), "TotalMatches" to SAVED_PLAYLISTS.size.toString(), "UpdateID" to "1"))
         }
         if (objectId != "FV:2") return fault(701)
         val didl = "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" " +
@@ -501,6 +553,12 @@ ${if (p.lineIn) "      <service><serviceType>urn:schemas-upnp-org:service:AudioI
 
         const val GRC_SERVICE = "urn:schemas-upnp-org:service:GroupRenderingControl:1"
         const val GRC_CONTROL = "/MediaRenderer/GroupRenderingControl/Control"
+        private val TRANSPORT_SETTINGS = setOf("GetTransportSettings", "SetPlayMode", "GetCrossfadeMode", "SetCrossfadeMode")
+        private const val TRACK_SECONDS = 215
+        private val STREAM_PREFIXES = listOf("x-sonosapi-stream:", "x-rincon-mp3radio:", "x-rincon-stream:", "x-sonos-htastream:")
+
+        /** Sonos playlists ("SQ:") the fake serves. */
+        val SAVED_PLAYLISTS = mapOf(3 to "Sunday Cleaning", 7 to "Road Trip")
         private val QUEUE_ACTIONS = setOf("RemoveAllTracksFromQueue", "RemoveTrackFromQueue", "Seek", "AddURIToQueue", "ConfigureSleepTimer", "GetRemainingSleepTimerDuration")
 
         private fun didlItem(title: String, cls: String) =

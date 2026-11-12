@@ -11,6 +11,7 @@ import com.timborja.tugma.data.BluetoothRepository
 import com.timborja.tugma.data.CastRepository
 import com.timborja.tugma.data.DlnaRepository
 import com.timborja.tugma.data.EventHub
+import com.timborja.tugma.data.EveryBrandPause
 import com.timborja.tugma.data.LinkplayRepository
 import com.timborja.tugma.data.SceneStore
 import com.timborja.tugma.data.StationsStore
@@ -30,6 +31,7 @@ import com.timborja.tugma.upnp.LanOnlyTransport
 import com.timborja.tugma.upnp.LoggingTransport
 import com.timborja.tugma.upnp.OkHttpTransport
 import com.timborja.tugma.upnp.SsdpDiscoverer
+import com.timborja.tugma.upnp.StreamLinkResolver
 import com.timborja.tugma.upnp.dlna.UpnpServices
 
 /** Manual DI: one container per process, created in [TugmaApp]. */
@@ -73,6 +75,8 @@ class AppContainer(context: Context) {
     val bluetooth = BluetoothRepository(context)
     val eq = EqRepository(context)
     val stations = StationsStore(context)
+    /** Reads radio playlist files (.pls, .m3u…) on the internet, so not through the LAN-only guard. */
+    val streamLinks = StreamLinkResolver(LoggingTransport(OkHttpTransport(), log))
     val scenes = SceneStore(context)
     val output = OutputMonitor(context)
     val soundcore = SoundcoreRepository(context, log)
@@ -82,6 +86,9 @@ class AppContainer(context: Context) {
     val sources: List<SpeakerSource> = listOf(sonos, linkplay, dlna, cast)
 
     fun source(brand: Brand): SpeakerSource? = sources.firstOrNull { it.brand == brand }
+
+    /** Pause all / Resume on the Speakers tab, every brand. */
+    val pause = EveryBrandPause(sonos, sources.filter { it.brand != Brand.SONOS })
 
     /** Demo mode swaps every source between real and fake speakers. */
     fun setDemoMode(on: Boolean) {

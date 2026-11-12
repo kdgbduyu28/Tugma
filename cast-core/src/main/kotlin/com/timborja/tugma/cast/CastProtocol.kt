@@ -219,7 +219,8 @@ class CastSession internal constructor(
         conn.send(CastMessage(CastNamespaces.SENDER, destination, namespace, payload.toString()))
     }
 
-    suspend fun request(namespace: String, destination: String, payload: JsonObject): JsonObject {
+    /** [timeoutMillis] overrides the client's default, e.g. for a LOAD that waits on a slow stream. */
+    suspend fun request(namespace: String, destination: String, payload: JsonObject, timeoutMillis: Long = this.timeoutMillis): JsonObject {
         connect(destination)
         val id = nextRequestId++
         val body = JsonObject(payload + ("requestId" to JsonPrimitive(id)))

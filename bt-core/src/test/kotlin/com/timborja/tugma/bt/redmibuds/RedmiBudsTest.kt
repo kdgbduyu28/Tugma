@@ -128,4 +128,44 @@ class RedmiBudsDeviceTest {
         val device = RedmiBudsDevice(RedmiBudsModels.byName("Redmi Buds 4 Active")!!, FakeRedmiBuds())
         assertFailsWith<IllegalArgumentException> { device.setAmbient(AmbientSound.NOISE_CANCELLING) }
     }
+
+    @Test
+    fun `gesture payloads match Gadgetbridge's layout`() {
+        // Left double tap -> next track; the right side is left alone (0xFF).
+        assertContentEquals(
+            byteArrayOf(0x05, 0x00, 0x02, 0x01, 0x03, 0xFF.toByte()),
+            RedmiParsers.gesturePayload(TapType.DOUBLE, BudSide.LEFT, GestureAction.NEXT_TRACK.code),
+        )
+        assertContentEquals(
+            byteArrayOf(0x04, 0x00, 0x0a, 0xFF.toByte(), 0x06),
+            RedmiParsers.ambientCyclePayload(BudSide.RIGHT, AmbientCycle.NOISE_CANCELLING_TRANSPARENCY),
+        )
+        // Reply records [tap, left, right] from index 3; an unknown tap type (0x7E) is skipped.
+        val parsed = RedmiParsers.gestures(byteArrayOf(0x08, 0x00, 0x02, 0x02, 0x02, 0x03, 0x7E, 0x01, 0x01, 0x03, 0x00, 0x06))
+        assertEquals(mapOf((TapType.TRIPLE to BudSide.LEFT) to 0x02, (TapType.TRIPLE to BudSide.RIGHT) to 0x03,
+            (TapType.LONG to BudSide.LEFT) to 0x00, (TapType.LONG to BudSide.RIGHT) to 0x06), parsed)
+    }
+
+    @Test
+    fun `touch controls round trip`() = runTest {
+        val fake = FakeRedmiBuds()
+        val device = RedmiBudsDevice(RedmiBudsModels.byName("Redmi Buds 5 Pro")!!, fake)
+        device.start(backgroundScope)
+
+        val s = device.state.first { it.gestures.size == 8 && it.ambientCycle.size == 2 }
+        assertEquals(GestureAction.NEXT_TRACK.code, s.gestures[TapType.TRIPLE to BudSide.RIGHT])
+        assertEquals(AmbientCycle.ALL, s.ambientCycle[BudSide.LEFT])
+
+        device.setGesture(TapType.DOUBLE, BudSide.RIGHT, GestureAction.VOLUME_UP.code)
+        device.setGesture(TapType.LONG, BudSide.LEFT, LongGestureAction.VOICE_ASSISTANT.code)
+        device.setAmbientCycle(BudSide.RIGHT, AmbientCycle.TRANSPARENCY_OFF)
+        assertEquals(GestureAction.PLAY_PAUSE.code to GestureAction.VOLUME_UP.code, fake.gestures[TapType.DOUBLE])
+        assertEquals(LongGestureAction.VOICE_ASSISTANT.code, fake.gestures.getValue(TapType.LONG).first)
+        assertEquals(AmbientCycle.ALL to AmbientCycle.TRANSPARENCY_OFF, fake.ambientCycle)
+        assertEquals(GestureAction.VOLUME_UP.code, device.state.value.gestures[TapType.DOUBLE to BudSide.RIGHT])
+
+        // Double tap can't be "nothing" on the 5 Pro (Gadgetbridge leaves NONE out there).
+        assertFailsWith<IllegalArgumentException> { device.setGesture(TapType.DOUBLE, BudSide.LEFT, GestureAction.NONE.code) }
+        device.close()
+    }
 }

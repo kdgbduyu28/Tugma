@@ -58,6 +58,7 @@ class SonosClient(private val transport: HttpTransport) {
         avTransport = ServiceEndpoint(coordinator.baseUrl + AVT_CONTROL, AVT_SERVICE),
         maxVolume = 100,
         urlFor = ::sonosUri,
+        standardPlayModes = false,
     )
 
     /** Bass/treble/loudness and soundbar EQ on [speaker] (the visible player of a bond). */
@@ -82,6 +83,11 @@ class SonosClient(private val transport: HttpTransport) {
     fun settings(speaker: Endpoint): SonosSettings = SonosSettings(soap, speaker)
 
     fun sleepTimer(coordinator: Endpoint): SonosSleepTimer = SonosSleepTimer(soap, coordinator)
+
+    /** Shuffle/repeat, crossfade and seeking; send to the group coordinator. */
+    fun transportSettings(coordinator: Endpoint): SonosTransportSettings = SonosTransportSettings(soap, coordinator)
+
+    fun playlists(any: Endpoint): SonosPlaylists = SonosPlaylists(soap, any)
 
     private suspend fun get(endpoint: Endpoint, path: String): String {
         val r = transport.execute(HttpRequest("GET", endpoint.baseUrl + path))

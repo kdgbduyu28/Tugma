@@ -39,13 +39,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.timborja.tugma.AppContainer
+import com.timborja.tugma.bt.redmibuds.AmbientCycle
 import com.timborja.tugma.bt.redmibuds.AmbientSound
 import com.timborja.tugma.bt.redmibuds.BudBattery
+import com.timborja.tugma.bt.redmibuds.BudSide
+import com.timborja.tugma.bt.redmibuds.LongGestureAction
 import com.timborja.tugma.bt.redmibuds.RedmiBudsDevice
 import com.timborja.tugma.bt.redmibuds.RedmiBudsModel
 import com.timborja.tugma.bt.redmibuds.RedmiBudsModels
 import com.timborja.tugma.bt.redmibuds.RedmiBudsState
 import com.timborja.tugma.bt.redmibuds.RedmiConfig
+import com.timborja.tugma.bt.redmibuds.TapType
 import com.timborja.tugma.sonos.Issue
 import com.timborja.tugma.sonos.Severity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -206,6 +210,32 @@ private fun RedmiSettings(vm: RedmiBudsViewModel, s: RedmiBudsState, m: RedmiBud
         m.toggles.forEach { t -> ToggleRow(t.label, s.toggles[t] == true) { on -> vm.act { setToggle(t, on) } } }
     }
 
+    if (m.gestures.isNotEmpty() || m.longPressActions.isNotEmpty()) {
+        SectionLabel("Touch controls")
+        // (code, label) choices per tap type; a code the earbuds report that isn't listed shows as hex.
+        val rows = m.gestures.map { (tap, actions) -> tap to actions.map { it.code to it.label } } +
+            listOfNotNull(m.longPressActions.takeIf { it.isNotEmpty() }?.let { a -> TapType.LONG to a.map { it.code to it.label } })
+        rows.forEach { (tap, choices) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(tap.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                BudSide.entries.forEach { side ->
+                    ChoiceMenu(side.name.first() + side.name.drop(1).lowercase(), s.gestures[tap to side], choices) { code -> vm.act { setGesture(tap, side, code) } }
+                }
+            }
+        }
+        val cycling = BudSide.entries.filter { s.gestures[TapType.LONG to it] == LongGestureAction.AMBIENT_SOUND_CONTROL.code }
+        if (m.ambientCycles.isNotEmpty() && cycling.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Long press cycles", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                cycling.forEach { side ->
+                    ChoiceMenu(side.name.first() + side.name.drop(1).lowercase(), s.ambientCycle[side]?.code, m.ambientCycles.map { it.code to it.label }) { code ->
+                        vm.act { setAmbientCycle(side, AmbientCycle.entries.first { it.code == code }) }
+                    }
+                }
+            }
+        }
+    }
+
     if (m.findEarbuds) {
         SectionLabel("Find earbuds")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -232,6 +262,20 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/** "Left: Play / pause" button that opens the choices. */
+@Composable
+private fun ChoiceMenu(side: String, current: Int?, choices: List<Pair<Int, String>>, onPick: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) {
+            Text("$side: " + (choices.firstOrNull { it.first == current }?.second ?: current?.let { "0x%02X".format(it) } ?: "?"), style = MaterialTheme.typography.labelLarge)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            choices.forEach { (code, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { open = false; onPick(code) }) }
+        }
     }
 }
 

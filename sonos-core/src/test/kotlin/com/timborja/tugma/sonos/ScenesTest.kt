@@ -107,3 +107,13 @@ class SceneReminderTest {
         assertNull(Json.decodeFromString(SonosScene.serializer(), old).reminder)
     }
 }
+
+class SceneOtherVolumesTest {
+    @Test
+    fun `other volumes survive JSON and old scenes read as none`() {
+        val s = SonosScene("x", "Evening", "RINCON_A", otherVolumes = mapOf("CAST|demo-cast-kwarto" to 20, "LINKPLAY|FF31" to 35))
+        assertEquals(s, Json.decodeFromString(SonosScene.serializer(), Json.encodeToString(SonosScene.serializer(), s)))
+        val old = """{"id":"y","name":"Old","leaderUuid":"RINCON_A"}"""
+        assertTrue(Json.decodeFromString(SonosScene.serializer(), old).otherVolumes.isEmpty())
+    }
+}

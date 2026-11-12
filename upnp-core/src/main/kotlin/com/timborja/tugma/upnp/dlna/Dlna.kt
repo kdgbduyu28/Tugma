@@ -2,7 +2,13 @@ package com.timborja.tugma.upnp.dlna
 
 import com.timborja.tugma.core.Brand
 import com.timborja.tugma.core.Capability
+import com.timborja.tugma.core.MediaPosition
+import com.timborja.tugma.core.MediaTime
 import com.timborja.tugma.core.PlaybackControl
+import com.timborja.tugma.core.PlayModeControl
+import com.timborja.tugma.core.RepeatMode
+import com.timborja.tugma.core.ShuffleRepeat
+import com.timborja.tugma.core.SeekablePlayback
 import com.timborja.tugma.core.PlaybackStatus
 import com.timborja.tugma.core.SpeakerSummary
 import com.timborja.tugma.core.TransportState
@@ -145,7 +151,9 @@ class UpnpPlaybackControl(
     private val maxVolume: Int = DlnaClient.DEFAULT_MAX_VOLUME,
     /** Turns a link into the URI this platform wants (Sonos marks radio streams). */
     private val urlFor: (url: String, live: Boolean) -> String = { url, _ -> url },
-) : PlaybackControl, UrlPlayback {
+    /** Standard AVTransport play modes. Sonos names them its own way and has its own controls, so it turns this off. */
+    private val standardPlayModes: Boolean = true,
+) : PlaybackControl, UrlPlayback, SeekablePlayback, PlayModeControl {
 
     override val capabilities: Set<Capability> = buildSet {
         if (renderingControl != null) { add(Capability.VOLUME); add(Capability.MUTE) }
@@ -190,6 +198,30 @@ class UpnpPlaybackControl(
         play()
     }
 
+    /** RelTime and TrackDuration from GetPositionInfo; streams report NOT_IMPLEMENTED. */
+    override suspend fun position(): MediaPosition? {
+        val out = avt("GetPositionInfo") ?: return null
+        return MediaPosition(MediaTime.parse(out["RelTime"]), MediaTime.parse(out["TrackDuration"])?.takeIf { it > 0 })
+    }
+
+    override suspend fun seek(seconds: Int) {
+        call(avTransport, "Seek", INSTANCE + ("Unit" to "REL_TIME") + ("Target" to MediaTime.format(seconds)))
+    }
+
+    override fun supports(mode: ShuffleRepeat): Boolean = standardPlayModes && avTransport != null && standardPlayMode(mode) != null
+
+    /** GetTransportSettings; renderers without a playlist of their own often fault, which reads as null. */
+    override suspend fun playMode(): ShuffleRepeat? {
+        if (!standardPlayModes) return null
+        return avt("GetTransportSettings")?.get("PlayMode")?.let(::parseStandardPlayMode)
+    }
+
+    override suspend fun setPlayMode(mode: ShuffleRepeat) {
+        val name = standardPlayMode(mode)?.takeIf { standardPlayModes }
+            ?: throw UnsupportedOperationException("This speaker can't combine shuffle with repeat")
+        call(avTransport, "SetPlayMode", INSTANCE + ("NewPlayMode" to name))
+    }
+
     override suspend fun play() { call(avTransport, "Play", INSTANCE + ("Speed" to "1")) }
     override suspend fun pause() { call(avTransport, "Pause", INSTANCE) }
     override suspend fun stop() { call(avTransport, "Stop", INSTANCE) }
@@ -210,6 +242,21 @@ class UpnpPlaybackControl(
     companion object {
         private val INSTANCE = listOf("InstanceID" to "0")
         private val MASTER = listOf("Channel" to "Master")
+
+        /** UPnP AVTransport:1 `CurrentPlayMode`: shuffle and repeat can't be combined. */
+        fun standardPlayMode(mode: ShuffleRepeat): String? = when {
+            !mode.shuffle -> when (mode.repeat) { RepeatMode.OFF -> "NORMAL"; RepeatMode.ALL -> "REPEAT_ALL"; RepeatMode.ONE -> "REPEAT_ONE" }
+            mode.repeat == RepeatMode.OFF -> "SHUFFLE"
+            else -> null
+        }
+
+        fun parseStandardPlayMode(value: String): ShuffleRepeat? = when (value.trim().uppercase()) {
+            "NORMAL" -> ShuffleRepeat(false, RepeatMode.OFF)
+            "REPEAT_ALL" -> ShuffleRepeat(false, RepeatMode.ALL)
+            "REPEAT_ONE" -> ShuffleRepeat(false, RepeatMode.ONE)
+            "SHUFFLE", "RANDOM" -> ShuffleRepeat(true, RepeatMode.OFF)
+            else -> null
+        }
 
         fun parseTransport(value: String): TransportState = when (value.trim().uppercase()) {
             "PLAYING" -> TransportState.PLAYING

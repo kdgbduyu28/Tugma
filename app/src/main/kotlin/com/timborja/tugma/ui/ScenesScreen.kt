@@ -39,6 +39,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.timborja.tugma.AppContainer
+import com.timborja.tugma.data.applyOtherVolumes
+import com.timborja.tugma.data.otherSceneSpeakers
 import com.timborja.tugma.sonos.HouseholdState
 import com.timborja.tugma.sonos.SceneFavorite
 import com.timborja.tugma.sonos.ScenePlanner
@@ -65,10 +67,33 @@ class ScenesViewModel(c: AppContainer) : PlanViewModel(c) {
         viewModelScope.launch { runCatching { f.list() }.onSuccess { favorites = it } }
     }
 
+    /** The scene whose plan is waiting for confirmation, so its other-brand volumes follow it. */
+    private var applying: SonosScene? = null
+
     fun apply(scene: SonosScene, h: HouseholdState) {
         ScenePlanner.problem(scene, h)?.let { message = it; return }
-        pending = ScenePlanner.plan(scene, h) ?: run { message = "Nothing to change: ${scene.name} is already set up."; null }
+        val plan = ScenePlanner.plan(scene, h)
+        if (plan == null) {
+            if (scene.otherVolumes.isEmpty()) message = "Nothing to change: ${scene.name} is already set up." else applyOthers(scene)
+            return
+        }
+        applying = scene
+        pending = plan
     }
+
+    override fun onExecuted() {
+        applying?.let(::applyOthers)
+        applying = null
+    }
+
+    private fun applyOthers(scene: SonosScene) {
+        viewModelScope.launch {
+            val n = c.applyOtherVolumes(scene)
+            message = "${scene.name}: set $n of ${scene.otherVolumes.size} other speakers' volumes"
+        }
+    }
+
+    fun otherSpeakers(): List<Pair<String, String>> = c.otherSceneSpeakers()
 
     fun newScene(h: HouseholdState): SonosScene {
         val first = h.speakers.firstOrNull(SonosGroupRules::canGroup)
@@ -109,7 +134,8 @@ fun ScenesScreen(onBack: () -> Unit) {
                         Text(s.name, style = MaterialTheme.typography.titleMedium)
                         Text(
                             s.rooms.joinToString(", ") { h.nameOf(it) } + (s.favorite?.let { " · ${it.title}" } ?: "") +
-                                (s.reminder?.let { " · reminder ${it.label}" } ?: ""),
+                                (s.reminder?.let { " · reminder ${it.label}" } ?: "") +
+                                (if (s.otherVolumes.isEmpty()) "" else " · ${s.otherVolumes.size} other ${if (s.otherVolumes.size == 1) "speaker" else "speakers"}"),
                             style = MaterialTheme.typography.bodySmall,
                         )
                         ScenePlanner.problem(s, h)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
@@ -126,19 +152,28 @@ fun ScenesScreen(onBack: () -> Unit) {
     }
 
     val editing = vm.editing
-    if (editing != null && h != null) SceneEditor(editing, h, vm.favorites, onSave = vm::save, onDismiss = { vm.editing = null })
+    if (editing != null && h != null) SceneEditor(editing, h, vm.favorites, vm.otherSpeakers(), onSave = vm::save, onDismiss = { vm.editing = null })
     vm.pending?.let { ConfirmPlanDialog(it, onConfirm = vm::execute, onDismiss = vm::dismissPlan, demo = demo) }
 }
 
 @OptIn(ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun SceneEditor(initial: SonosScene, h: HouseholdState, favorites: List<SonosFavorite>, onSave: (SonosScene) -> Unit, onDismiss: () -> Unit) {
+private fun SceneEditor(
+    initial: SonosScene,
+    h: HouseholdState,
+    favorites: List<SonosFavorite>,
+    /** (key, label) of other brands' speakers that have a volume. */
+    others: List<Pair<String, String>>,
+    onSave: (SonosScene) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val rooms = h.speakers.filter(SonosGroupRules::canGroup).sortedBy { it.roomName.lowercase() }
     var name by remember { mutableStateOf(initial.name) }
     var leader by remember { mutableStateOf<SonosSpeaker?>(h.speaker(initial.leaderUuid) ?: rooms.firstOrNull()) }
     val members = remember { mutableStateMapOf<String, Boolean>().apply { initial.memberUuids.forEach { put(it, true) } } }
     val volumes = remember { mutableStateMapOf<String, Float>().apply { initial.volumes.forEach { (k, v) -> put(k, v.toFloat()) } } }
     var favorite by remember { mutableStateOf(initial.favorite) }
+    val otherVolumes = remember { mutableStateMapOf<String, Float>().apply { initial.otherVolumes.forEach { (k, v) -> put(k, v.toFloat()) } } }
     var remind by remember { mutableStateOf(initial.reminder != null) }
     val reminderTime = androidx.compose.material3.rememberTimePickerState(
         (initial.reminder?.minuteOfDay ?: 420) / 60, (initial.reminder?.minuteOfDay ?: 420) % 60, is24Hour = true,
@@ -167,6 +202,19 @@ private fun SceneEditor(initial: SonosScene, h: HouseholdState, favorites: List<
                         Text(r.roomName, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(88.dp))
                         Slider(value = volumes[r.uuid] ?: 25f, onValueChange = { volumes[r.uuid] = it }, valueRange = 0f..100f, enabled = r.uuid in volumes, modifier = Modifier.weight(1f).semantics { contentDescription = "${r.roomName} scene volume" })
                         Text(volumes[r.uuid]?.toInt()?.toString() ?: "–", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
+                    }
+                }
+                // Saved speakers that aren't in the list right now (not scanned yet) keep their volume.
+                val otherRows = others + initial.otherVolumes.keys.filter { k -> others.none { it.first == k } }.map { it to it.substringAfter('|') + " (not found now)" }
+                if (otherRows.isNotEmpty()) {
+                    Text("Other speakers' volumes (set after the Sonos steps, without review)", style = MaterialTheme.typography.labelLarge)
+                    otherRows.forEach { (key, label) ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = key in otherVolumes, onCheckedChange = { on -> if (on) otherVolumes[key] = 25f else otherVolumes.remove(key) })
+                            Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(88.dp), maxLines = 2)
+                            Slider(value = otherVolumes[key] ?: 25f, onValueChange = { otherVolumes[key] = it }, valueRange = 0f..100f, enabled = key in otherVolumes, modifier = Modifier.weight(1f).semantics { contentDescription = "$label scene volume" })
+                            Text(otherVolumes[key]?.toInt()?.toString() ?: "–", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
+                        }
                     }
                 }
                 Text("Start playing", style = MaterialTheme.typography.labelLarge)
@@ -213,6 +261,7 @@ private fun SceneEditor(initial: SonosScene, h: HouseholdState, favorites: List<
                             memberUuids = memberIds,
                             volumes = volumes.filterKeys { it in included }.mapValues { it.value.toInt() },
                             favorite = favorite,
+                            otherVolumes = otherVolumes.mapValues { it.value.toInt() },
                             reminder = if (remind && reminderDays.isNotEmpty()) {
                                 com.timborja.tugma.sonos.SceneReminder(reminderTime.hour * 60 + reminderTime.minute, reminderDays)
                             } else {

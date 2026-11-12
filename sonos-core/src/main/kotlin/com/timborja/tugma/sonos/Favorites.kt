@@ -21,8 +21,15 @@ data class SonosFavorite(
      */
     val needsQueue: Boolean get() = uri.isBlank() || QUEUE_PREFIXES.any { uri.startsWith(it) }
 
+    /** Radio and other live streams can't go into a queue; tracks, albums and playlists can. */
+    val canEnqueue: Boolean get() = uri.isNotBlank() && STREAM_PREFIXES.none { uri.startsWith(it) }
+
     private companion object {
         val QUEUE_PREFIXES = listOf("x-rincon-cpcontainer:", "x-rincon-playlist:", "file:///jffs/settings/savedqueues.rsq")
+        val STREAM_PREFIXES = listOf(
+            "x-sonosapi-stream:", "x-sonosapi-radio:", "x-sonosapi-hls:", "x-rincon-mp3radio:", "aac:", "hls-radio:",
+            "x-rincon-stream:", "x-sonos-htastream:", "x-sonosprog-http:",
+        )
     }
 }
 
@@ -91,6 +98,25 @@ class SonosPlayer(private val soap: SoapClient, private val coordinator: Endpoin
             soap.call(avt("SetAVTransportURI", "CurrentURI" to favorite.uri, "CurrentURIMetaData" to favorite.metadata))
         }
         soap.call(avt("Play", "Speed" to "1"))
+    }
+
+    /**
+     * Adds to the group's queue without interrupting what's playing. [next] puts it right after
+     * the current track (SoCo `add_to_queue(as_next=True)`), otherwise at the end.
+     * Returns the queue position of the first added track.
+     */
+    suspend fun enqueue(favorite: SonosFavorite, next: Boolean): Int? {
+        require(favorite.canEnqueue) { "${favorite.title} is a live stream and can't be queued" }
+        val out = soap.call(
+            avt(
+                "AddURIToQueue",
+                "EnqueuedURI" to favorite.uri,
+                "EnqueuedURIMetaData" to favorite.metadata,
+                "DesiredFirstTrackNumberEnqueued" to "0",
+                "EnqueueAsNext" to if (next) "1" else "0",
+            ),
+        )
+        return out["FirstTrackNumberEnqueued"]?.toIntOrNull()
     }
 }
 

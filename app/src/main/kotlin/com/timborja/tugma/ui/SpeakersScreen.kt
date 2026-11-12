@@ -81,12 +81,12 @@ class SpeakersViewModel(c: AppContainer) : PlanViewModel(c) {
 
     fun pauseAll() {
         viewModelScope.launch {
-            val n = c.sonos.pauseAll()
-            message = if (n == 0) "Nothing was playing" else "Paused $n ${if (n == 1) "group" else "groups"}"
+            val n = c.pause.pauseAll()
+            message = if (n == 0) "Nothing was playing" else "Paused $n ${if (n == 1) "speaker or group" else "speakers and groups"}"
         }
     }
 
-    val paused = c.sonos.paused
+    val canResume = c.pause.canResume
     val hidden = c.settings.hiddenSpeakers
     val nicknames = c.settings.nicknames
     var showHidden by mutableStateOf(false)
@@ -111,8 +111,8 @@ class SpeakersViewModel(c: AppContainer) : PlanViewModel(c) {
 
     fun resumeAll() {
         viewModelScope.launch {
-            val n = c.sonos.resumePaused()
-            message = if (n == 0) "Nothing to resume" else "Resumed $n ${if (n == 1) "group" else "groups"}"
+            val n = c.pause.resume()
+            message = if (n == 0) "Nothing to resume" else "Resumed $n ${if (n == 1) "speaker or group" else "speakers and groups"}"
         }
     }
 
@@ -260,8 +260,8 @@ fun SpeakersScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             OutlinedButton(onClick = onGroups, modifier = Modifier.weight(1f)) { Text("Groups") }
                             OutlinedButton(onClick = onScenes, modifier = Modifier.weight(1f)) { Text("Scenes") }
-                            val paused by vm.paused.collectAsState()
-                            if (paused.isEmpty()) OutlinedButton(onClick = vm::pauseAll, modifier = Modifier.weight(1f)) { Text("Pause all") }
+                            val canResume by vm.canResume.collectAsState(initial = false)
+                            if (!canResume) OutlinedButton(onClick = vm::pauseAll, modifier = Modifier.weight(1f)) { Text("Pause all") }
                             else OutlinedButton(onClick = vm::resumeAll, modifier = Modifier.weight(1f)) { Text("Resume") }
                         }
                     }
@@ -324,6 +324,15 @@ fun SpeakersScreen(
 
                 if (counts.values.sum() > 1) {
                     item(key = "mixer") { TextButton(onClick = onMixer) { Text("Volume mixer: every speaker on one screen") } }
+                }
+
+                // Without a Sonos section, Pause all / Resume lives down here (it covers every brand either way).
+                if (!(showSonos && h != null) && counts.values.sum() > 0) {
+                    item(key = "pause-all") {
+                        val canResume by vm.canResume.collectAsState(initial = false)
+                        if (!canResume) TextButton(onClick = vm::pauseAll) { Text("Pause all speakers") }
+                        else TextButton(onClick = vm::resumeAll) { Text("Resume the speakers Pause all stopped") }
+                    }
                 }
 
                 if (nothingFound) {

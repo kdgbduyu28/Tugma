@@ -39,6 +39,11 @@ class FakeCastHousehold(
         var title: String? = null,
         var artist: String? = null,
         val mediaSessionId: Int = 1,
+        var currentTime: Double = 12.0,
+        /** Null for a live stream, which has no duration. */
+        var duration: Double? = 180.0,
+        /** GET_STATUS replies to answer without a transportId, like a receiver that's still starting. */
+        var startingPolls: Int = 0,
     )
 
     class Device(
@@ -53,6 +58,12 @@ class FakeCastHousehold(
 
     /** contentId of the last LOAD, for test assertions. */
     var lastLoaded: String? = null
+
+    /** The `media` object of the last LOAD. */
+    var lastLoadedMedia: JsonObject? = null
+
+    /** How many GET_STATUS polls a freshly launched receiver takes before it has a transport. */
+    var launchPolls: Int = 0
 
     /** Every message type the fakes received, e.g. "SET_VOLUME", for test assertions. */
     val received = mutableListOf<String>()
@@ -104,11 +115,11 @@ class FakeCastHousehold(
         }
 
         private fun receiver(type: String, json: JsonObject, id: Int?): JsonObject? = when (type) {
-            "GET_STATUS" -> receiverStatus(id)
+            "GET_STATUS" -> receiverStatus(id).also { d.app?.takeIf { a -> a.startingPolls > 0 }?.let { a -> a.startingPolls -= 1 } }
             "LAUNCH" -> if (json["appId"]?.jsonPrimitive?.contentOrNull != "CC1AD845") {
                 error(id, "LAUNCH_ERROR")
             } else {
-                d.app = App("CC1AD845", "Default Media Receiver", "web-launched", mediaNamespace = true, playerState = null)
+                d.app = App("CC1AD845", "Default Media Receiver", "web-launched", mediaNamespace = true, playerState = null, startingPolls = launchPolls)
                 receiverStatus(id)
             }
             "STOP" -> if (d.app == null || json["sessionId"]?.jsonPrimitive?.contentOrNull != "session-${d.app?.appId}") {
@@ -144,7 +155,7 @@ class FakeCastHousehold(
                             put("isIdleScreen", a.idleScreen)
                             put("sessionId", "session-${a.appId}")
                             put("statusText", if (a.idleScreen) "Ready to cast" else "Casting: ${a.displayName}")
-                            put("transportId", a.transportId)
+                            if (a.startingPolls == 0) put("transportId", a.transportId)
                             putJsonArray("namespaces") {
                                 if (a.mediaNamespace) addJsonObject { put("name", CastNamespaces.MEDIA) }
                                 addJsonObject { put("name", "urn:x-cast:com.example.custom") }
@@ -156,10 +167,15 @@ class FakeCastHousehold(
         }
 
         private fun media(destination: String, type: String, json: JsonObject, id: Int?): JsonObject? {
-            val a = d.app?.takeIf { it.transportId == destination && it.mediaNamespace } ?: return null
+            val a = d.app?.takeIf { it.transportId == destination && it.mediaNamespace && it.startingPolls == 0 } ?: return null
             if (type == "LOAD") {
                 val media = json["media"]?.jsonObject ?: return error(id, "LOAD_FAILED")
-                if (media["contentId"]?.jsonPrimitive?.contentOrNull.isNullOrBlank()) return error(id, "LOAD_FAILED")
+                val contentId = media["contentId"]?.jsonPrimitive?.contentOrNull
+                // Like a real receiver: blank links and playlist files fail to load.
+                if (contentId.isNullOrBlank() || Regex("""\.(m3u|pls)(\?.*)?$""", RegexOption.IGNORE_CASE).containsMatchIn(contentId)) return error(id, "LOAD_FAILED")
+                lastLoadedMedia = media
+                a.currentTime = 0.0
+                a.duration = if (media["streamType"]?.jsonPrimitive?.contentOrNull == "LIVE") null else 180.0
                 a.title = media["metadata"]?.jsonObject?.get("title")?.jsonPrimitive?.contentOrNull
                 a.artist = null
                 a.playerState = "PLAYING"
@@ -171,6 +187,12 @@ class FakeCastHousehold(
                     "PLAY" -> a.playerState = "PLAYING"
                     "PAUSE" -> a.playerState = "PAUSED"
                     "STOP" -> a.playerState = null
+                    "SEEK" -> {
+                        val t = json["currentTime"]?.jsonPrimitive?.doubleOrNull
+                        val length = a.duration
+                        if (t == null || length == null || t < 0 || t > length) return error(id, "INVALID_REQUEST")
+                        a.currentTime = t
+                    }
                     "QUEUE_UPDATE" -> a.title = (a.title ?: "Track") + " (skipped ${json["jump"]?.jsonPrimitive?.contentOrNull})"
                     else -> return error(id, "INVALID_REQUEST")
                 }
@@ -185,7 +207,9 @@ class FakeCastHousehold(
                             addJsonObject {
                                 put("mediaSessionId", a.mediaSessionId)
                                 put("playerState", a.playerState)
+                                put("currentTime", a.currentTime)
                                 putJsonObject("media") {
+                                    a.duration?.let { put("duration", it) }
                                     putJsonObject("metadata") {
                                         a.title?.let { put("title", it) }
                                         a.artist?.let { put("artist", it) }

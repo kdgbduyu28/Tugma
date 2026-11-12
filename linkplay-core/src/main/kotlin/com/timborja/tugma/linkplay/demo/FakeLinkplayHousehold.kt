@@ -19,6 +19,10 @@ class FakeLinkplayHousehold(private val latencyMillis: Long = 0) : HttpTransport
         var channel = 0
         var hostIp: String? = null
         var title = "Demo Track"
+        var positionMs = 0
+        var loop = 0
+        /** 0 means a stream, as Linkplay reports for radio. */
+        var lengthMs = 0
         var eqOn = false
         var eqPreset = "Flat"
     }
@@ -56,8 +60,8 @@ class FakeLinkplayHousehold(private val latencyMillis: Long = 0) : HttpTransport
         return when {
             cmd == "getStatusEx" -> """{"uuid":"${s.uuid}","DeviceName":"${s.name}","firmware":"4.6.415145","hardware":"${s.hardware}","project":"${s.hardware}",""" +
                 """"group":"${if (s.hostIp != null) 1 else 0}","master_uuid":"${s.hostIp?.let { ip -> speakers.first { it.host == ip }.uuid }.orEmpty()}","MAC":"00:22:6C:00:00:${s.host.takeLast(2)}"}"""
-            cmd == "getPlayerStatus" -> """{"type":"${if (s.hostIp != null) 1 else 0}","ch":"${s.channel}","mode":"10","loop":"0","status":"${s.status}",""" +
-                """"curpos":"0","totlen":"0","Title":"${hex(s.title)}","Artist":"${hex("Tugma FM")}","Album":"","vol":"${s.volume}","mute":"${if (s.muted) 1 else 0}"}"""
+            cmd == "getPlayerStatus" -> """{"type":"${if (s.hostIp != null) 1 else 0}","ch":"${s.channel}","mode":"10","loop":"${s.loop}","status":"${s.status}",""" +
+                """"curpos":"${s.positionMs}","totlen":"${s.lengthMs}","Title":"${hex(s.title)}","Artist":"${hex("Tugma FM")}","Album":"","vol":"${s.volume}","mute":"${if (s.muted) 1 else 0}"}"""
             cmd == "multiroom:getSlaveList" -> {
                 val g = guestsOf(s)
                 """{"slaves":${g.size},"wmrm_version":"4.2","slave_list":[""" + g.joinToString(",") {
@@ -70,6 +74,11 @@ class FakeLinkplayHousehold(private val latencyMillis: Long = 0) : HttpTransport
             cmd == "setPlayerCmd:pause" -> { s.status = "pause"; "OK" }
             cmd == "setPlayerCmd:stop" -> { s.status = "stop"; "OK" }
             cmd == "setPlayerCmd:next" || cmd == "setPlayerCmd:prev" -> "OK"
+            cmd.startsWith("setPlayerCmd:loopmode:") -> parts.getOrNull(2)?.toIntOrNull()?.takeIf { it in 0..5 }?.let { s.loop = it; "OK" } ?: "Failed"
+            cmd.startsWith("setPlayerCmd:seek:") -> {
+                val sec = parts.getOrNull(2)?.toIntOrNull()
+                if (sec == null || s.lengthMs == 0 || sec * 1000 > s.lengthMs) "Failed" else { s.positionMs = sec * 1000; "OK" }
+            }
             cmd.startsWith("setPlayerCmd:slave_channel:") -> { s.channel = parts[2].toInt(); "OK" }
             cmd.startsWith("ConnectMasterAp:JoinGroupMaster:eth") -> {
                 val hostIp = cmd.removePrefix("ConnectMasterAp:JoinGroupMaster:eth").substringBefore(":wifi")

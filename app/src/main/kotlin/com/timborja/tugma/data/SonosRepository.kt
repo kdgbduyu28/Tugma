@@ -20,7 +20,9 @@ import com.timborja.tugma.sonos.SonosInputs
 import com.timborja.tugma.sonos.SonosPlayer
 import com.timborja.tugma.sonos.SonosQueue
 import com.timborja.tugma.sonos.SonosSettings
+import com.timborja.tugma.sonos.SonosPlaylists
 import com.timborja.tugma.sonos.SonosSleepTimer
+import com.timborja.tugma.sonos.SonosTransportSettings
 import com.timborja.tugma.sonos.SonosGroupVolume
 import com.timborja.tugma.sonos.SonosSound
 import com.timborja.tugma.sonos.SonosHousehold
@@ -115,6 +117,11 @@ class SonosRepository(
         _state.value.household?.speaker(id)?.takeIf { !it.invisible }?.let { client().settings(it.endpoint) }
 
     fun sleepTimer(id: String): SonosSleepTimer? = _state.value.household?.coordinatorOf(id)?.let { client().sleepTimer(it.endpoint) }
+
+    /** Shuffle/repeat, crossfade and seeking for the room's group. */
+    fun transportSettings(id: String): SonosTransportSettings? = _state.value.household?.coordinatorOf(id)?.let { client().transportSettings(it.endpoint) }
+
+    fun playlists(): SonosPlaylists? = anyPlayer()?.let { client().playlists(it.endpoint) }
 
     /** What each group plays, keyed by coordinator UUID. Light: two requests per group. */
     suspend fun nowPlaying(): Map<String, NowPlaying> {

@@ -64,6 +64,13 @@ class FakeRenderer(
     /** Last URI set with SetAVTransportURI. */
     var uri: String? = null
 
+    var track: Int = 1
+    var elapsedSeconds: Int = 0
+    /** Length of the current track; null for a stream, which reports NOT_IMPLEMENTED. */
+    var durationSeconds: Int? = 215
+    /** Standard AVTransport play mode; null makes GetTransportSettings fault, like renderers without a playlist. */
+    var playMode: String? = "NORMAL"
+
     fun avTransport(action: String, arg: (String) -> String = { "" }): HttpResponse = when (action) {
         "SetAVTransportURI" -> {
             uri = arg("CurrentURI")
@@ -75,13 +82,37 @@ class FakeRenderer(
             avtService, action,
             mapOf("CurrentTransportState" to transport, "CurrentTransportStatus" to "OK", "CurrentSpeed" to "1"),
         )
-        "GetPositionInfo" -> FakeSoap.ok(avtService, action, mapOf("Track" to "1", "TrackMetaData" to didl()))
+        "GetPositionInfo" -> FakeSoap.ok(
+            avtService, action,
+            mapOf(
+                "Track" to track.toString(),
+                "TrackDuration" to (durationSeconds?.let(::hms) ?: "NOT_IMPLEMENTED"),
+                "RelTime" to (if (durationSeconds == null) "NOT_IMPLEMENTED" else hms(elapsedSeconds)),
+                "TrackMetaData" to didl(),
+            ),
+        )
+        "Seek" -> {
+            val target = arg("Target").split(':').takeIf { it.size == 3 }?.map { it.toIntOrNull() ?: -1 }
+            val seconds = target?.let { (h, m, sec) -> if (h < 0 || m < 0 || sec < 0) null else h * 3600 + m * 60 + sec }
+            val length = durationSeconds
+            if (arg("Unit") != "REL_TIME" || seconds == null || length == null || seconds > length) FakeSoap.fault(711)
+            else { elapsedSeconds = seconds; FakeSoap.ok(avtService, action) }
+        }
         "Play" -> { transport = "PLAYING"; FakeSoap.ok(avtService, action) }
         "Pause" -> { transport = "PAUSED_PLAYBACK"; FakeSoap.ok(avtService, action) }
         "Stop" -> { transport = "STOPPED"; FakeSoap.ok(avtService, action) }
         "Next", "Previous" -> FakeSoap.ok(avtService, action)
+        "GetTransportSettings" -> playMode?.let { FakeSoap.ok(avtService, action, mapOf("PlayMode" to it, "RecQualityMode" to "NOT_IMPLEMENTED")) } ?: FakeSoap.fault(401)
+        "SetPlayMode" -> arg("NewPlayMode").takeIf { playMode != null && it in STANDARD_PLAY_MODES }
+            ?.let { playMode = it; FakeSoap.ok(avtService, action) } ?: FakeSoap.fault(712)
         else -> FakeSoap.fault(401)
     }
+
+    private companion object {
+        val STANDARD_PLAY_MODES = setOf("NORMAL", "SHUFFLE", "REPEAT_ONE", "REPEAT_ALL", "RANDOM", "DIRECT_1", "INTRO")
+    }
+
+    private fun hms(seconds: Int) = "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
 
     private fun didl(): String {
         if (title == null && artist == null) return ""

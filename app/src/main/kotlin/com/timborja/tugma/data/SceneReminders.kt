@@ -100,8 +100,15 @@ class SceneReminderReceiver : BroadcastReceiver() {
                             if (c.sonos.state.value.household == null) c.sonos.refresh()
                             val h = c.sonos.state.value.household ?: return@withTimeoutOrNull "Couldn't find your Sonos speakers."
                             ScenePlanner.problem(scene, h)?.let { return@withTimeoutOrNull it }
-                            val plan = ScenePlanner.plan(scene, h) ?: return@withTimeoutOrNull "Already set up."
-                            c.sonos.execute(plan.confirm()).fold({ "Applied." }, { "Didn't apply: ${it.message}" })
+                            val plan = ScenePlanner.plan(scene, h)
+                            val sonos = plan?.let { p -> c.sonos.execute(p.confirm()) }
+                            if (sonos?.isFailure == true) return@withTimeoutOrNull "Didn't apply: ${sonos.exceptionOrNull()?.message}"
+                            val others = c.applyOtherVolumes(scene)
+                            when {
+                                plan == null && scene.otherVolumes.isEmpty() -> "Already set up."
+                                scene.otherVolumes.isEmpty() -> "Applied."
+                                else -> "Applied; $others of ${scene.otherVolumes.size} other speakers' volumes set."
+                            }
                         } ?: "Timed out. Open Tugma and apply it from Scenes."
                         SceneReminders.notify(context, scene, text, offerApply = false)
                     } finally {

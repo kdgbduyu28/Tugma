@@ -2,13 +2,16 @@ package com.timborja.tugma.cast
 
 import com.timborja.tugma.core.Brand
 import com.timborja.tugma.core.Capability
+import com.timborja.tugma.core.MediaPosition
 import com.timborja.tugma.core.PlaybackControl
+import com.timborja.tugma.core.SeekablePlayback
 import com.timborja.tugma.core.UrlPlayback
 import com.timborja.tugma.core.PlaybackStatus
 import com.timborja.tugma.core.SpeakerSummary
 import com.timborja.tugma.core.TransportState
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -19,6 +22,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /** A Cast device or group found over mDNS (`_googlecast._tcp`). */
@@ -97,7 +101,17 @@ data class ReceiverStatus(val volumeLevel: Double?, val muted: Boolean?, val fix
     val activeApp: CastApp? get() = apps.firstOrNull { !it.isIdleScreen }
 }
 
-data class MediaStatus(val mediaSessionId: Int?, val playerState: String?, val title: String?, val artist: String?)
+data class MediaStatus(
+    val mediaSessionId: Int?,
+    val playerState: String?,
+    val title: String?,
+    val artist: String?,
+    /** "FINISHED", "CANCELLED", "INTERRUPTED" or "ERROR" when the player is IDLE. */
+    val idleReason: String? = null,
+    val currentTimeSeconds: Double? = null,
+    /** Missing or negative for live streams. */
+    val durationSeconds: Double? = null,
+)
 
 /** Parses the JSON replies from the receiver and media namespaces. */
 object CastJson {
@@ -133,6 +147,9 @@ object CastJson {
             playerState = s.string("playerState"),
             title = metadata?.string("title"),
             artist = metadata?.string("artist") ?: metadata?.string("albumArtist") ?: metadata?.string("subtitle"),
+            idleReason = s.string("idleReason"),
+            currentTimeSeconds = s["currentTime"]?.jsonPrimitive?.doubleOrNull,
+            durationSeconds = s["media"]?.jsonObject?.get("duration")?.jsonPrimitive?.doubleOrNull,
         )
     }
 
@@ -152,40 +169,40 @@ object CastJson {
  * whatever app is casting. Apps that don't expose the media namespace (some music apps use their
  * own) can still have their volume changed but not their playback.
  */
-class CastPlayback(private val client: CastClient, private val host: String, private val port: Int) : PlaybackControl, UrlPlayback {
+class CastPlayback(private val client: CastClient, private val host: String, private val port: Int) : PlaybackControl, UrlPlayback, SeekablePlayback {
     /**
-     * Launches Google's Default Media Receiver if it isn't running, then LOADs the link with a
-     * title. Same flow as pychromecast `play_media`.
+     * Launches Google's Default Media Receiver if it isn't running, waits for it to come up, then
+     * LOADs the link with a title. Same flow as pychromecast `play_media`.
      */
     override suspend fun playUrl(url: String, title: String, live: Boolean) {
         client.session(host, port) {
-            var receiver = CastJson.receiverStatus(request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, type("GET_STATUS")))
-            var app = receiver.apps.firstOrNull { it.appId == DEFAULT_MEDIA_RECEIVER && it.transportId != null }
-            if (app == null) {
-                receiver = CastJson.receiverStatus(
-                    request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, buildJsonObject { put("type", "LAUNCH"); put("appId", DEFAULT_MEDIA_RECEIVER) }),
-                )
-                app = receiver.apps.firstOrNull { it.appId == DEFAULT_MEDIA_RECEIVER && it.transportId != null }
-                    ?: throw CastException("The device didn't start the media receiver")
+            val app = mediaReceiver()
+            val reply = try {
+                request(CastNamespaces.MEDIA, app.transportId!!, CastMedia.load(url, title, live), timeoutMillis = LOAD_TIMEOUT_MILLIS)
+            } catch (e: CastException) {
+                throw CastException(CastMedia.loadError(e.message))
             }
-            request(
-                CastNamespaces.MEDIA, app.transportId!!,
-                buildJsonObject {
-                    put("type", "LOAD")
-                    put("autoplay", true)
-                    put(
-                        "media",
-                        buildJsonObject {
-                            put("contentId", url.trim())
-                            put("contentUrl", url.trim())
-                            put("contentType", contentType(url))
-                            put("streamType", if (live) "LIVE" else "BUFFERED")
-                            put("metadata", buildJsonObject { put("metadataType", 0); put("title", title) })
-                        },
-                    )
-                },
-            )
+            val status = CastJson.mediaStatus(reply)
+            if (status?.idleReason == "ERROR") throw CastException(CastMedia.loadError(null))
         }
+    }
+
+    /**
+     * The running Default Media Receiver, launching it first if needed. Real receivers often
+     * answer LAUNCH before the app has a transport, so this polls GET_STATUS briefly.
+     */
+    private suspend fun CastSession.mediaReceiver(): CastApp {
+        fun ReceiverStatus.dmr() = apps.firstOrNull { it.appId == DEFAULT_MEDIA_RECEIVER && it.transportId != null }
+        CastJson.receiverStatus(request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, type("GET_STATUS"))).dmr()?.let { return it }
+        var receiver = CastJson.receiverStatus(
+            request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, buildJsonObject { put("type", "LAUNCH"); put("appId", DEFAULT_MEDIA_RECEIVER) }),
+        )
+        repeat(LAUNCH_POLLS) {
+            receiver.dmr()?.let { return it }
+            delay(LAUNCH_POLL_MILLIS)
+            receiver = CastJson.receiverStatus(request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, type("GET_STATUS")))
+        }
+        return receiver.dmr() ?: throw CastException("The device didn't start the media receiver")
     }
 
     /** Closes whatever app is casting (receiver STOP with its session), back to the idle screen. */
@@ -196,16 +213,6 @@ class CastPlayback(private val client: CastClient, private val host: String, pri
             val sessionId = app.sessionId ?: throw CastException("The casting app didn't report a session")
             request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, buildJsonObject { put("type", "STOP"); put("sessionId", sessionId) })
         }
-    }
-
-    private fun contentType(url: String): String = when (url.substringBefore('?').substringAfterLast('.', "").lowercase()) {
-        "aac" -> "audio/aac"
-        "m4a", "mp4" -> "audio/mp4"
-        "ogg", "opus" -> "audio/ogg"
-        "flac" -> "audio/flac"
-        "wav" -> "audio/wav"
-        "m3u8" -> "application/x-mpegURL"
-        else -> "audio/mpeg"
     }
 
     override val capabilities: Set<Capability> = setOf(Capability.VOLUME, Capability.MUTE, Capability.TRANSPORT)
@@ -256,13 +263,21 @@ class CastPlayback(private val client: CastClient, private val host: String, pri
         }
     }
 
+    override suspend fun position(): MediaPosition? = client.session(host, port) {
+        val app = CastJson.receiverStatus(request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, type("GET_STATUS"))).mediaApp ?: return@session null
+        val media = runCatching { CastJson.mediaStatus(request(CastNamespaces.MEDIA, app.transportId!!, type("GET_STATUS"))) }.getOrNull() ?: return@session null
+        MediaPosition(media.currentTimeSeconds?.toInt(), media.durationSeconds?.takeIf { it > 0 }?.toInt())
+    }
+
+    override suspend fun seek(seconds: Int) = media("SEEK") { put("currentTime", seconds.coerceAtLeast(0).toDouble()) }
+
     override suspend fun play() = media("PLAY")
     override suspend fun pause() = media("PAUSE")
     override suspend fun stop() = media("STOP")
-    override suspend fun next() = media("QUEUE_UPDATE", jump = 1)
-    override suspend fun previous() = media("QUEUE_UPDATE", jump = -1)
+    override suspend fun next() = media("QUEUE_UPDATE") { put("jump", 1) }
+    override suspend fun previous() = media("QUEUE_UPDATE") { put("jump", -1) }
 
-    private suspend fun media(command: String, jump: Int? = null) {
+    private suspend fun media(command: String, extra: JsonObjectBuilder.() -> Unit = {}) {
         client.session(host, port) {
             val receiver = CastJson.receiverStatus(request(CastNamespaces.RECEIVER, CastNamespaces.RECEIVER_ID, type("GET_STATUS")))
             val app = receiver.mediaApp ?: throw CastException(
@@ -277,7 +292,7 @@ class CastPlayback(private val client: CastClient, private val host: String, pri
                 buildJsonObject {
                     put("type", command)
                     put("mediaSessionId", session)
-                    if (jump != null) put("jump", jump)
+                    extra()
                 },
             )
         }
@@ -287,6 +302,10 @@ class CastPlayback(private val client: CastClient, private val host: String, pri
 
     companion object {
         const val DEFAULT_MEDIA_RECEIVER = "CC1AD845"
+        /** A LOAD is answered once the stream starts, which can take a while for radio. */
+        const val LOAD_TIMEOUT_MILLIS = 15_000L
+        const val LAUNCH_POLLS = 8
+        const val LAUNCH_POLL_MILLIS = 500L
     }
 }
 

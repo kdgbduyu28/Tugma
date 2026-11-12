@@ -5,7 +5,12 @@ import com.timborja.tugma.core.Capability
 import com.timborja.tugma.core.CommandPlan
 import com.timborja.tugma.core.ConfirmedPlan
 import com.timborja.tugma.core.PlannedRequest
+import com.timborja.tugma.core.MediaPosition
 import com.timborja.tugma.core.PlaybackControl
+import com.timborja.tugma.core.PlayModeControl
+import com.timborja.tugma.core.RepeatMode
+import com.timborja.tugma.core.ShuffleRepeat
+import com.timborja.tugma.core.SeekablePlayback
 import com.timborja.tugma.core.UrlPlayback
 import com.timborja.tugma.core.PlaybackStatus
 import com.timborja.tugma.core.SpeakerSummary
@@ -151,7 +156,7 @@ class LinkplayClient(private val transport: HttpTransport) {
 
 internal fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
-class LinkplayPlayback(private val client: LinkplayClient, private val d: LinkplayDevice) : PlaybackControl, UrlPlayback {
+class LinkplayPlayback(private val client: LinkplayClient, private val d: LinkplayDevice) : PlaybackControl, UrlPlayback, SeekablePlayback, PlayModeControl {
     /** Arylic's documented `setPlayerCmd:play:<url>`; the title comes from the stream itself. */
     override suspend fun playUrl(url: String, title: String, live: Boolean) = cmd("setPlayerCmd:play:${url.trim()}")
 
@@ -177,6 +182,26 @@ class LinkplayPlayback(private val client: LinkplayClient, private val d: Linkpl
 
     private suspend fun cmd(c: String) { client.command(d.host, c, d.https) }
 
+    /** `curpos` and `totlen` are milliseconds; `totlen` is 0 for radio. */
+    override suspend fun position(): MediaPosition? {
+        val o = client.playerStatus(d)
+        val length = o.str("totlen")?.toLongOrNull() ?: return null
+        return MediaPosition(o.str("curpos")?.toLongOrNull()?.let { (it / 1000).toInt() }, (length / 1000).toInt().takeIf { it > 0 })
+    }
+
+    override fun supports(mode: ShuffleRepeat): Boolean = true
+
+    /** `loop` in getPlayerStatus (experimental: the numbering is python-linkplay's `LoopMode`). */
+    override suspend fun playMode(): ShuffleRepeat? = client.playerStatus(d).str("loop")?.let(LinkplayLoop::parse)
+
+    override suspend fun setPlayMode(mode: ShuffleRepeat) = cmd("setPlayerCmd:loopmode:${LinkplayLoop.code(mode)}")
+
+    /** `setPlayerCmd:seek:<seconds>`; the speaker answers "Failed" for streams. */
+    override suspend fun seek(seconds: Int) {
+        val reply = client.command(d.host, "setPlayerCmd:seek:${seconds.coerceAtLeast(0)}", d.https).first.trim()
+        if (reply.equals("Failed", ignoreCase = true)) throw java.io.IOException("The speaker couldn't seek in this track")
+    }
+
     override suspend fun setVolume(volume: Int) = cmd("setPlayerCmd:vol:${volume.coerceIn(0, 100)}")
     override suspend fun setMuted(muted: Boolean) = cmd("setPlayerCmd:mute:${if (muted) 1 else 0}")
     override suspend fun play() = cmd("setPlayerCmd:resume")
@@ -184,6 +209,22 @@ class LinkplayPlayback(private val client: LinkplayClient, private val d: Linkpl
     override suspend fun stop() = cmd("setPlayerCmd:stop")
     override suspend fun next() = cmd("setPlayerCmd:next")
     override suspend fun previous() = cmd("setPlayerCmd:prev")
+}
+
+/** Linkplay's `loop` / `loopmode` numbers, as python-linkplay names them. */
+object LinkplayLoop {
+    private val CODES = mapOf(
+        ShuffleRepeat(false, RepeatMode.ALL) to 0,
+        ShuffleRepeat(false, RepeatMode.ONE) to 1,
+        ShuffleRepeat(true, RepeatMode.ALL) to 2,
+        ShuffleRepeat(true, RepeatMode.OFF) to 3,
+        ShuffleRepeat(false, RepeatMode.OFF) to 4,
+        ShuffleRepeat(true, RepeatMode.ONE) to 5,
+    )
+
+    fun code(mode: ShuffleRepeat): Int = CODES.getValue(mode)
+
+    fun parse(value: String): ShuffleRepeat? = value.trim().toIntOrNull()?.let { n -> CODES.entries.firstOrNull { it.value == n }?.key }
 }
 
 /** Builds grouping/channel plans. Every one of these changes how speakers play together, so they need confirmation. */

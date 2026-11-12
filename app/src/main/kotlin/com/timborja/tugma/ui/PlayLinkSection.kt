@@ -43,7 +43,11 @@ class PlayLinkViewModel(private val c: AppContainer, private val brand: Brand, p
     fun play(s: Station) {
         val p = c.source(brand)?.playback(id) as? UrlPlayback ?: return
         viewModelScope.launch {
-            runCatching { p.playUrl(s.url, s.name, s.live) }
+            runCatching {
+                // Demo speakers take any link, so playlists are only read for real ones.
+                val url = if (c.settings.demoMode.value) s.url else c.streamLinks.resolve(s.url)
+                p.playUrl(url, s.name, s.live)
+            }
                 .onSuccess { message = "Playing ${s.name}" }
                 .onFailure { message = "Couldn't play ${s.name}: ${it.message}" }
         }

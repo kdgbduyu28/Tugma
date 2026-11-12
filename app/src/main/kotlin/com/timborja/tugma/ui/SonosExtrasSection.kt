@@ -2,6 +2,7 @@ package com.timborja.tugma.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -9,9 +10,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -20,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,10 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.timborja.tugma.AppContainer
+import com.timborja.tugma.sonos.PlayMode
 import com.timborja.tugma.sonos.QueueItem
+import com.timborja.tugma.core.RepeatMode
 import com.timborja.tugma.sonos.SonosFavorite
 import com.timborja.tugma.sonos.SonosQueue
 import com.timborja.tugma.sonos.SonosSpeaker
+import com.timborja.tugma.sonos.SonosTransportSettings
+import com.timborja.tugma.upnp.SoapFault
 import kotlinx.coroutines.launch
 
 /** Favorites and the sleep timer for one room. Playback-class actions: no confirm step. */
@@ -41,6 +52,12 @@ class SonosExtrasViewModel(private val c: AppContainer, private val id: String) 
         private set
     var queue by mutableStateOf<List<QueueItem>?>(null)
         private set
+    var playlists by mutableStateOf<List<SonosFavorite>>(emptyList())
+        private set
+    var playMode by mutableStateOf<PlayMode?>(null)
+        private set
+    var crossfade by mutableStateOf<Boolean?>(null)
+        private set
     var message by mutableStateOf<String?>(null)
 
     val speaker: SonosSpeaker? get() = c.sonos.state.value.household?.speaker(id)
@@ -49,8 +66,40 @@ class SonosExtrasViewModel(private val c: AppContainer, private val id: String) 
     fun load() {
         viewModelScope.launch {
             c.sonos.favorites()?.let { f -> runCatching { f.list() }.onSuccess { favorites = it }.onFailure { message = "Favorites: ${it.message}" } }
+            c.sonos.playlists()?.let { p -> runCatching { p.list() }.onSuccess { playlists = it } }
             readTimer()
             readQueue()
+            readTransport()
+        }
+    }
+
+    private suspend fun readTransport() {
+        val t = c.sonos.transportSettings(id) ?: return
+        runCatching { t.playMode() }.onSuccess { playMode = it }
+        runCatching { t.crossfade() }.onSuccess { crossfade = it }
+    }
+
+    private fun transportDo(what: String, block: suspend SonosTransportSettings.() -> Unit) {
+        val t = c.sonos.transportSettings(id) ?: return
+        viewModelScope.launch {
+            runCatching { t.block() }.onFailure {
+                // 712: shuffle/repeat only apply while the group plays from its queue.
+                message = if ((it as? SoapFault)?.upnpErrorCode == 712) "$what only works while playing from the queue" else "$what: ${it.message}"
+            }
+            readTransport()
+        }
+    }
+
+    fun setShuffle(on: Boolean) = transportDo("Shuffle") { setPlayMode(PlayMode(on, playMode?.repeat ?: RepeatMode.OFF)) }
+    fun setRepeat(r: RepeatMode) = transportDo("Repeat") { setPlayMode(PlayMode(playMode?.shuffle ?: false, r)) }
+    fun setCrossfade(on: Boolean) = transportDo("Crossfade") { this.setCrossfade(on) }
+
+    fun enqueue(f: SonosFavorite, next: Boolean) {
+        val player = c.sonos.player(id) ?: return
+        viewModelScope.launch {
+            runCatching { player.enqueue(f, next) }
+                .onSuccess { message = if (next) "${f.title} plays next" else "${f.title} added to the queue"; readQueue() }
+                .onFailure { message = "Couldn't queue ${f.title}: ${it.message}" }
         }
     }
 
@@ -89,7 +138,7 @@ class SonosExtrasViewModel(private val c: AppContainer, private val id: String) 
         val player = c.sonos.player(id) ?: return
         viewModelScope.launch {
             runCatching { player.play(f) }
-                .onSuccess { message = "Playing ${f.title}"; readQueue() }
+                .onSuccess { message = "Playing ${f.title}"; readQueue(); readTransport() }
                 .onFailure { message = "Couldn't play ${f.title}: ${it.message}" }
         }
     }
@@ -100,6 +149,52 @@ class SonosExtrasViewModel(private val c: AppContainer, private val id: String) 
             runCatching { t.set(minutes) }.onFailure { message = "Sleep timer: ${it.message}" }
             readTimer()
         }
+    }
+}
+
+/** Tap to play; the menu queues it instead, for anything that isn't a live stream. */
+@Composable
+private fun FavoriteRow(vm: SonosExtrasViewModel, f: SonosFavorite) {
+    var menu by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().clickable { vm.play(f) }.padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(Icons.Filled.PlayArrow, contentDescription = "Play ${f.title}")
+        Column(Modifier.weight(1f)) {
+            Text(f.title, style = MaterialTheme.typography.bodyLarge)
+            val note = listOfNotNull(f.description, if (f.needsQueue) "replaces the queue" else null).joinToString(" · ")
+            if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (f.canEnqueue) {
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Queue ${f.title}") }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Play next") }, onClick = { menu = false; vm.enqueue(f, next = true) })
+                    DropdownMenuItem(text = { Text("Add to end of queue") }, onClick = { menu = false; vm.enqueue(f, next = false) })
+                }
+            }
+        }
+    }
+}
+
+/** Shuffle, repeat and crossfade; the seek bar lives under Now playing (SeekSection). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlayModeControls(vm: SonosExtrasViewModel) {
+    val mode = vm.playMode
+    val fade = vm.crossfade
+    if (mode == null && fade == null) return
+
+    SectionLabel("Playback")
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (mode != null) {
+            FilterChip(selected = mode.shuffle, onClick = { vm.setShuffle(!mode.shuffle) }, label = { Text("Shuffle") })
+            val nextRepeat = RepeatMode.entries[(mode.repeat.ordinal + 1) % RepeatMode.entries.size]
+            FilterChip(selected = mode.repeat != RepeatMode.OFF, onClick = { vm.setRepeat(nextRepeat) }, label = { Text("Repeat: ${mode.repeat.label}") })
+        }
+        if (fade != null) FilterChip(selected = fade, onClick = { vm.setCrossfade(!fade) }, label = { Text("Crossfade") })
     }
 }
 
@@ -115,23 +210,15 @@ fun SonosExtrasSection(id: String, onAlarms: () -> Unit, onMessage: (String) -> 
     when {
         favs == null -> Text("Reading My Sonos…", style = MaterialTheme.typography.bodySmall)
         favs.isEmpty() -> Text("No favorites yet. Add some in the Sonos app; they show up here.", style = MaterialTheme.typography.bodySmall)
-        else -> Column {
-            favs.forEach { f ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { vm.play(f) }.padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = "Play ${f.title}")
-                    Column(Modifier.weight(1f)) {
-                        Text(f.title, style = MaterialTheme.typography.bodyLarge)
-                        val note = listOfNotNull(f.description, if (f.needsQueue) "replaces the queue" else null).joinToString(" · ")
-                        if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-        }
+        else -> Column { favs.forEach { f -> FavoriteRow(vm, f) } }
     }
+
+    if (vm.playlists.isNotEmpty()) {
+        SectionLabel("Sonos playlists")
+        Column { vm.playlists.forEach { f -> FavoriteRow(vm, f) } }
+    }
+
+    PlayModeControls(vm)
 
     val q = vm.queue
     if (!q.isNullOrEmpty()) {

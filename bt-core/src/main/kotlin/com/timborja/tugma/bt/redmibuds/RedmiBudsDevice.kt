@@ -37,6 +37,26 @@ enum class Toggle(val config: Int, val label: String) {
     ADAPTIVE_ANC(0x25, "Adaptive noise cancelling"), ADAPTIVE_SOUND(0x29, "Adaptive sound"),
 }
 
+enum class BudSide { LEFT, RIGHT }
+
+/** Which touch gesture; the code is the record id inside the GESTURES config. */
+enum class TapType(val code: Int, val label: String) { SINGLE(0x04, "Single tap"), DOUBLE(0x01, "Double tap"), TRIPLE(0x02, "Triple tap"), LONG(0x03, "Long press") }
+
+enum class GestureAction(val code: Int, val label: String) {
+    NONE(0x08, "Nothing"), PLAY_PAUSE(0x01, "Play / pause"), PREVIOUS_TRACK(0x02, "Previous track"),
+    NEXT_TRACK(0x03, "Next track"), VOLUME_UP(0x04, "Volume up"), VOLUME_DOWN(0x05, "Volume down"),
+}
+
+enum class LongGestureAction(val code: Int, val label: String) {
+    NONE(0x08, "Nothing"), VOICE_ASSISTANT(0x00, "Voice assistant"), AMBIENT_SOUND_CONTROL(0x06, "Noise control"),
+}
+
+/** Which modes a long press cycles through when it's set to noise control. */
+enum class AmbientCycle(val code: Int, val label: String) {
+    NOISE_CANCELLING_OFF(0x03, "Noise cancelling ↔ Off"), TRANSPARENCY_OFF(0x05, "Transparency ↔ Off"),
+    NOISE_CANCELLING_TRANSPARENCY(0x06, "Noise cancelling ↔ Transparency"), ALL(0x07, "All three"),
+}
+
 object RedmiConfig {
     const val GESTURES = 0x02
     const val EAR_DETECTION = 0x06
@@ -68,7 +88,22 @@ data class RedmiBudsModel(
     val toggles: List<Toggle> = emptyList(),
     val earDetection: Boolean = false,
     val findEarbuds: Boolean = false,
+    /** Gesture actions per tap type, as in Gadgetbridge's coordinators; empty = not offered. */
+    val singleTapActions: List<GestureAction> = emptyList(),
+    val tapActions: List<GestureAction> = emptyList(),
+    val longPressActions: List<LongGestureAction> = emptyList(),
+    val ambientCycles: List<AmbientCycle> = emptyList(),
 ) {
+    /** Tap types this model lets you remap, with the actions each one offers. */
+    val gestures: List<Pair<TapType, List<GestureAction>>>
+        get() = buildList {
+            if (singleTapActions.isNotEmpty()) add(TapType.SINGLE to singleTapActions)
+            if (tapActions.isNotEmpty()) {
+                add(TapType.DOUBLE to tapActions)
+                add(TapType.TRIPLE to tapActions)
+            }
+        }
+
     val features: List<String>
         get() = buildList {
             add("battery")
@@ -76,9 +111,12 @@ data class RedmiBudsModel(
             if (eqPresets.isNotEmpty() || customEq) add("equalizer")
             if (toggles.isNotEmpty() || earDetection) add("toggles")
             if (findEarbuds) add("find earbuds")
+            if (gestures.isNotEmpty() || longPressActions.isNotEmpty()) add("touch controls")
             add("firmware")
         }
 }
+
+private val TAP_ACTIONS = GestureAction.entries - GestureAction.NONE
 
 object RedmiBudsModels {
     private val buds5Pro = RedmiBudsModel(
@@ -90,6 +128,10 @@ object RedmiBudsModels {
         customEq = true,
         toggles = listOf(Toggle.ADAPTIVE_ANC, Toggle.ADAPTIVE_SOUND, Toggle.AUTO_ANSWER, Toggle.DOUBLE_CONNECTION),
         earDetection = true,
+        singleTapActions = GestureAction.entries,
+        tapActions = TAP_ACTIONS,
+        longPressActions = listOf(LongGestureAction.VOICE_ASSISTANT, LongGestureAction.AMBIENT_SOUND_CONTROL),
+        ambientCycles = AmbientCycle.entries,
     )
 
     /** Same capabilities as Gadgetbridge's coordinators; names are their Bluetooth-name patterns. */
@@ -102,6 +144,9 @@ object RedmiBudsModels {
             eqPresets = listOf(EqPreset.STANDARD, EqPreset.TREBLE, EqPreset.BASS, EqPreset.VOICE),
             toggles = listOf(Toggle.AUTO_ANSWER, Toggle.DOUBLE_CONNECTION),
             earDetection = true,
+            tapActions = TAP_ACTIONS,
+            longPressActions = listOf(LongGestureAction.VOICE_ASSISTANT, LongGestureAction.AMBIENT_SOUND_CONTROL),
+            ambientCycles = AmbientCycle.entries,
         ),
         RedmiBudsModel("Redmi Buds 4 Active"),
         buds5Pro,
@@ -111,14 +156,26 @@ object RedmiBudsModels {
             "Redmi Buds 6 Active",
             eqPresets = listOf(EqPreset.STANDARD, EqPreset.TREBLE, EqPreset.BASS, EqPreset.VOICE, EqPreset.VOLUME),
             findEarbuds = true,
+            singleTapActions = GestureAction.entries,
+            tapActions = TAP_ACTIONS,
+            longPressActions = listOf(LongGestureAction.NONE, LongGestureAction.VOICE_ASSISTANT),
         ),
-        RedmiBudsModel("Redmi Buds 6 Lite", ambientModes = AmbientSound.entries, customEq = true, toggles = listOf(Toggle.AUTO_ANSWER), findEarbuds = true),
+        RedmiBudsModel(
+            "Redmi Buds 6 Lite", ambientModes = AmbientSound.entries, customEq = true, toggles = listOf(Toggle.AUTO_ANSWER), findEarbuds = true,
+            singleTapActions = GestureAction.entries,
+            tapActions = GestureAction.entries,
+            longPressActions = listOf(LongGestureAction.VOICE_ASSISTANT, LongGestureAction.AMBIENT_SOUND_CONTROL),
+            ambientCycles = AmbientCycle.entries,
+        ),
         RedmiBudsModel(
             "Redmi Buds 8 Active",
             eqPresets = listOf(EqPreset.BALANCED, EqPreset.TREBLE, EqPreset.BASS, EqPreset.VOICE, EqPreset.VOLUME, EqPreset.CUSTOM),
             customEq = true,
             toggles = listOf(Toggle.ADAPTIVE_SOUND, Toggle.DOUBLE_CONNECTION),
             findEarbuds = true,
+            singleTapActions = GestureAction.entries,
+            tapActions = TAP_ACTIONS,
+            longPressActions = listOf(LongGestureAction.NONE, LongGestureAction.VOICE_ASSISTANT),
         ),
     )
 
@@ -152,11 +209,41 @@ data class RedmiBudsState(
     val eqCurve: List<Int>? = null,
     val earDetection: Boolean? = null,
     val toggles: Map<Toggle, Boolean> = emptyMap(),
+    /** Raw action codes per tap type and side (decode with GestureAction / LongGestureAction). */
+    val gestures: Map<Pair<TapType, BudSide>, Int> = emptyMap(),
+    val ambientCycle: Map<BudSide, AmbientCycle> = emptyMap(),
     val error: String? = null,
 )
 
 /** Payload parsers shared by the session and the fake. */
 object RedmiParsers {
+    fun gesturePayload(tap: TapType, side: BudSide, code: Int): ByteArray =
+        byteArrayOf(0x05, 0x00, RedmiConfig.GESTURES.toByte(), tap.code.toByte(), 0xFF.toByte(), 0xFF.toByte())
+            .also { it[if (side == BudSide.LEFT) 4 else 5] = code.toByte() }
+
+    fun ambientCyclePayload(side: BudSide, cycle: AmbientCycle): ByteArray =
+        byteArrayOf(0x04, 0x00, RedmiConfig.LONG_GESTURES.toByte(), 0xFF.toByte(), 0xFF.toByte())
+            .also { it[if (side == BudSide.LEFT) 3 else 4] = cycle.code.toByte() }
+
+    /** GESTURES reply: `[tap, left, right]` records from index 3; unknown tap types are skipped. */
+    fun gestures(p: ByteArray): Map<Pair<TapType, BudSide>, Int> = buildMap {
+        var i = 3
+        while (i + 2 < p.size) {
+            TapType.entries.firstOrNull { it.code == (p[i].toInt() and 0xFF) }?.let { tap ->
+                put(tap to BudSide.LEFT, p[i + 1].toInt() and 0xFF)
+                put(tap to BudSide.RIGHT, p[i + 2].toInt() and 0xFF)
+            }
+            i += 3
+        }
+    }
+
+    /** LONG_GESTURES reply: left cycle at index 3, right at 4. */
+    fun ambientCycles(p: ByteArray): Map<BudSide, AmbientCycle> = buildMap {
+        listOf(BudSide.LEFT to 3, BudSide.RIGHT to 4).forEach { (side, i) ->
+            AmbientCycle.entries.firstOrNull { it.code == (p.getOrNull(i)?.toInt()?.and(0xFF)) }?.let { put(side, it) }
+        }
+    }
+
     /** Bit 7 = charging, low 7 bits = percent, 0xff = absent. */
     fun battery(b: Byte): BudBattery? = (b.toInt() and 0xFF).let { if (it == 0xFF) null else BudBattery(it and 0x7F, it and 0x80 != 0) }
 
@@ -235,6 +322,25 @@ class RedmiBudsDevice(
     suspend fun setToggle(t: Toggle, on: Boolean) {
         request(Opcode.SET_CONFIG, byteArrayOf(0x03, 0x00, t.config.toByte(), if (on) 1 else 0))
         _state.update { it.copy(toggles = it.toggles + (t to on)) }
+    }
+
+    /**
+     * One side of one gesture: `[0x05, 0x00, GESTURES, tap, left, right]`, 0xFF for the side
+     * left alone (Gadgetbridge's encodeSetGesture). [code] is a GestureAction or, for LONG, a
+     * LongGestureAction code.
+     */
+    suspend fun setGesture(tap: TapType, side: BudSide, code: Int) {
+        val allowed = if (tap == TapType.LONG) model.longPressActions.map { it.code } else model.gestures.firstOrNull { it.first == tap }?.second?.map { it.code }.orEmpty()
+        require(code in allowed) { "${tap.label} can't be set to that on ${model.name}" }
+        request(Opcode.SET_CONFIG, RedmiParsers.gesturePayload(tap, side, code))
+        _state.update { it.copy(gestures = it.gestures + ((tap to side) to code)) }
+    }
+
+    /** What a long press set to noise control cycles through: `[0x04, 0x00, LONG_GESTURES, left, right]`. */
+    suspend fun setAmbientCycle(side: BudSide, cycle: AmbientCycle) {
+        require(cycle in model.ambientCycles) { "${cycle.label} isn't available on ${model.name}" }
+        request(Opcode.SET_CONFIG, RedmiParsers.ambientCyclePayload(side, cycle))
+        _state.update { it.copy(ambientCycle = it.ambientCycle + (side to cycle)) }
     }
 
     /** The wire value is inverted: 0x00 means detection is on. */
@@ -363,6 +469,8 @@ class RedmiBudsDevice(
                     }
                 }
             }
+            RedmiConfig.GESTURES -> _state.update { it.copy(gestures = RedmiParsers.gestures(p)) }
+            RedmiConfig.LONG_GESTURES -> _state.update { it.copy(ambientCycle = RedmiParsers.ambientCycles(p)) }
             RedmiConfig.EQ_CURVE -> {
                 val levels = RedmiConfig.EQ_BANDS_HZ.indices.mapNotNull { b -> p.getOrNull(EQ_CURVE_FIRST_LEVEL + 3 * b)?.let(RedmiConfig::decodeLevel) }
                 if (levels.size == RedmiConfig.EQ_BANDS_HZ.size) _state.update { it.copy(eqCurve = levels) }

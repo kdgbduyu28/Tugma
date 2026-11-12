@@ -162,3 +162,50 @@ class NowPlayingTest {
         assertEquals(setOf("GetTransportInfo", "GetPositionInfo"), fake.receivedActions.toSet())
     }
 }
+
+class DlnaSeekTest {
+    @Test
+    fun `position and seek use RelTime and REL_TIME, streams can't seek`() = kotlinx.coroutines.test.runTest {
+        val fake = com.timborja.tugma.upnp.demo.FakeDlnaHousehold()
+        val client = com.timborja.tugma.upnp.dlna.DlnaClient(fake)
+        val sala = com.timborja.tugma.upnp.dlna.DlnaDiscovery(client, fake).discover().first { it.friendlyName == "Sala Speaker" }
+        val p = client.playback(sala) as com.timborja.tugma.core.SeekablePlayback
+
+        p.seek(75)
+        assertEquals(com.timborja.tugma.core.MediaPosition(75, 215), p.position())
+
+        fake.renderers.getValue(sala.id).durationSeconds = null
+        val stream = p.position()!!
+        assertTrue(!stream.seekable)
+        assertNull(stream.elapsedSeconds)
+        assertFailsWith<SoapFault> { p.seek(10) }
+    }
+}
+
+class DlnaPlayModeTest {
+    @Test
+    fun `standard play modes round trip, shuffle can't combine with repeat`() = kotlinx.coroutines.test.runTest {
+        val fake = com.timborja.tugma.upnp.demo.FakeDlnaHousehold()
+        val client = com.timborja.tugma.upnp.dlna.DlnaClient(fake)
+        val sala = com.timborja.tugma.upnp.dlna.DlnaDiscovery(client, fake).discover().first { it.friendlyName == "Sala Speaker" }
+        val p = client.playback(sala) as com.timborja.tugma.core.PlayModeControl
+        val repeatAll = com.timborja.tugma.core.ShuffleRepeat(false, com.timborja.tugma.core.RepeatMode.ALL)
+        val shuffleRepeat = com.timborja.tugma.core.ShuffleRepeat(true, com.timborja.tugma.core.RepeatMode.ALL)
+
+        assertEquals(com.timborja.tugma.core.ShuffleRepeat(false, com.timborja.tugma.core.RepeatMode.OFF), p.playMode())
+        p.setPlayMode(repeatAll)
+        assertEquals("REPEAT_ALL", fake.renderers.getValue(sala.id).playMode)
+        assertEquals(repeatAll, p.playMode())
+        assertFalse(p.supports(shuffleRepeat))
+        assertFailsWith<UnsupportedOperationException> { p.setPlayMode(shuffleRepeat) }
+
+        fake.renderers.getValue(sala.id).playMode = null
+        assertNull(p.playMode(), "a renderer without GetTransportSettings shows no controls")
+    }
+
+    @Test
+    fun `parses RANDOM as shuffle and ignores DIRECT_1`() {
+        assertEquals(com.timborja.tugma.core.ShuffleRepeat(true, com.timborja.tugma.core.RepeatMode.OFF), UpnpPlaybackControl.parseStandardPlayMode("random"))
+        assertNull(UpnpPlaybackControl.parseStandardPlayMode("DIRECT_1"))
+    }
+}

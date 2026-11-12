@@ -19,6 +19,14 @@ class FakeRedmiBuds(
     var eqCurve = List(10) { 0 }
     var earDetection = true
     val toggles = mutableMapOf(Toggle.AUTO_ANSWER to false, Toggle.DOUBLE_CONNECTION to true, Toggle.ADAPTIVE_ANC to true, Toggle.ADAPTIVE_SOUND to false)
+    /** tap type -> (left, right) action codes, Gadgetbridge's defaults. */
+    val gestures = mutableMapOf(
+        TapType.SINGLE to (GestureAction.PLAY_PAUSE.code to GestureAction.PLAY_PAUSE.code),
+        TapType.DOUBLE to (GestureAction.PLAY_PAUSE.code to GestureAction.PLAY_PAUSE.code),
+        TapType.TRIPLE to (GestureAction.PREVIOUS_TRACK.code to GestureAction.NEXT_TRACK.code),
+        TapType.LONG to (LongGestureAction.AMBIENT_SOUND_CONTROL.code to LongGestureAction.AMBIENT_SOUND_CONTROL.code),
+    )
+    var ambientCycle = AmbientCycle.ALL to AmbientCycle.ALL
     var left = BudBattery(80, false)
     var right = BudBattery(75, false)
     var case = BudBattery(50, true)
@@ -100,6 +108,11 @@ class FakeRedmiBuds(
         val id = m.payload[1].toInt() and 0xFF
         val body: ByteArray = when (id) {
             RedmiConfig.EQ_PRESET -> byteArrayOf(0x03, 0x00, id.toByte(), eqPreset.code.toByte())
+            RedmiConfig.GESTURES -> {
+                val records = gestures.flatMap { (tap, lr) -> listOf(tap.code.toByte(), lr.first.toByte(), lr.second.toByte()) }
+                byteArrayOf((2 + records.size).toByte(), 0x00, id.toByte()) + records.toByteArray()
+            }
+            RedmiConfig.LONG_GESTURES -> byteArrayOf(0x04, 0x00, id.toByte(), ambientCycle.first.code.toByte(), ambientCycle.second.code.toByte())
             RedmiConfig.EFFECT_STRENGTH -> if (ambient == AmbientSound.TRANSPARENCY) {
                 byteArrayOf(0x04, 0x00, id.toByte(), RedmiConfig.STRENGTH_TRANSPARENCY.toByte(), transparencyStrength.code.toByte())
             } else {
@@ -128,6 +141,15 @@ class FakeRedmiBuds(
                 transparencyStrength = TransparencyStrength.entries.first { it.code == p[4].toInt() }
             }
             RedmiConfig.EQ_CURVE -> eqCurve = (0 until 10).map { RedmiConfig.decodeLevel(p[9 + 3 * it]) }
+            RedmiConfig.GESTURES -> TapType.entries.firstOrNull { it.code == p[3].toInt() }?.let { tap ->
+                val (l, r) = gestures.getValue(tap)
+                val keep = 0xFF.toByte()
+                gestures[tap] = (if (p[4] == keep) l else p[4].toInt() and 0xFF) to (if (p[5] == keep) r else p[5].toInt() and 0xFF)
+            }
+            RedmiConfig.LONG_GESTURES -> {
+                fun cycle(b: Byte, old: AmbientCycle) = AmbientCycle.entries.firstOrNull { it.code == (b.toInt() and 0xFF) } ?: old
+                ambientCycle = cycle(p[3], ambientCycle.first) to cycle(p[4], ambientCycle.second)
+            }
             0x09 -> if (p[3].toInt() == 1) findRequests++
             else -> Toggle.entries.firstOrNull { it.config == id }?.let { toggles[it] = p[3].toInt() == 1 }
         }

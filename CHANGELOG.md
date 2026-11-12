@@ -1,13 +1,13 @@
 # Changelog
 
-Everything since the last pushed commit (`f3a3436`, phase 8). None of it has run on real hardware yet. It has been tested against the built-in demo household and the JVM test suite (168 tests).
+Everything since the last pushed commit (`f3a3436`, phase 8). None of it has run on real hardware yet. It has been tested against the built-in demo household and the JVM test suite (168 tests). Phases 49–57 add more tests, which haven't been compiled or run yet.
 
 ## Headphones and Bluetooth
 
 - **Redmi Buds (experimental, phase 9).** Ported from Gadgetbridge (AGPL-3.0 files):
   - framing and the challenge-response handshake;
   - battery, noise control and strength, EQ presets and a custom curve, toggles, Find earbuds.
-  - Gesture remapping isn't ported.
+- **Redmi Buds touch controls (phase 49):** remap single, double and triple tap and long press per earbud, and pick which modes a noise-control long press cycles through.
 - **Protocol lab (phase 10).** For devices Tugma doesn't support yet:
   - raw RFCOMM, BLE GATT and USB HID explorers;
   - `btsnoop_hci.log` import with a framing guess;
@@ -27,12 +27,14 @@ Everything since the last pushed commit (`f3a3436`, phase 8). None of it has run
 - **Inputs (phase 18):** line-in from any room, and TV on soundbars.
 - **Snapshot restore covers multiroom groups too (phase 19).**
 - **Speaker settings (phase 22):** status light, touch-control lock, Trueplay on/off, room rename.
-- **Scenes (phase 23):** rooms, volumes and a favorite applied as one reviewed plan.
+- **Scenes (phase 23):** rooms, volumes and a favorite applied as one reviewed plan. Since phase 57, scenes can also set other brands' speaker volumes (after the plan, from the app or a reminder's Apply).
 - **Scene reminders (phase 47):** a notification at the scene's time with an Apply button.
-- **Pause all / Resume (phase 29).**
+- **Pause all / Resume (phase 29)**, for every brand since phase 55.
 - **Now-playing line on room cards (phase 32).**
 - **Live updates on the speaker screen (phase 35)** and on the room cards' now-playing lines (phase 37): UPnP event subscriptions (GENA), with polling as the fallback.
 - **"Leave group" on the speaker screen (phase 34)**, for a room that's playing along with another room.
+- **Shuffle, repeat and crossfade (phase 51)** on the speaker screen, for the room's whole group.
+- **Sonos playlists, Play next and Add to queue (phase 51):** playlists saved in the Sonos app play like favorites; favorites and playlists can be queued without interrupting what's playing.
 
 ## Other brands
 
@@ -43,18 +45,23 @@ Everything since the last pushed commit (`f3a3436`, phase 8). None of it has run
 - **Play a link on any brand (phase 21):** internet radio or audio files, with saved links.
 - **Google Cast:**
   - Stop casting (phase 27).
+  - Sturdier link playback (phase 50): waits for a slow-starting media receiver, gives LOAD 15 s, sends HLS/DASH/Opus/WebM content types, and explains failed loads.
+- **Playlist links (phase 50):** `.pls`, `.m3u`, `.xspf` and `.asx` radio links are resolved to their first stream before playing, on every brand and in the CLI.
   - Speakers added by IP now work for Linkplay and Cast too, not just Sonos (phase 26).
 
 ## Everyday use
 
 - **Speaker remote in the notification shade (phase 16).** Volume buttons control the speaker through a remote MediaSession.
 - **Volume buttons in the app (phase 28).** They control the speaker whose screen is open.
-- **Volume mixer (phase 44):** every speaker, every brand, one screen.
+- **Volume mixer (phase 44):** every speaker, every brand, one screen. Mute all and Unmute since phase 56.
 - **Home-screen widget for one speaker (phase 20).**
+- **Speaker Quick Settings tile and widget polish (phase 52):** a play/pause tile for the widget's speaker; the widget and tile show paused/stopped, volume or muted, and open the speaker's own screen.
 - **Hide speakers from the list (phase 41).**
 - **Speaker search (phase 45).**
 - **Nicknames for DLNA and Cast speakers (phase 42).**
 - **Sleep timer for DLNA, Linkplay and Cast speakers (phase 39)**, kept by the phone.
+- **Shuffle and repeat for DLNA and Linkplay (phase 54).** Linkplay's loop-mode numbers are experimental.
+- **Seek bar for every brand (phase 53):** Sonos, DLNA, Linkplay and Cast show the position in the track and can jump within it; radio streams don't show one.
 - **Appearance setting (phase 43):** light, dark or system theme, and wallpaper colours on Android 12+.
 - **Backup and restore (phase 24)** of EQ profiles, saved links, scenes and speakers added by IP.
 
@@ -72,7 +79,7 @@ Everything since the last pushed commit (`f3a3436`, phase 8). None of it has run
 ## CLI
 
 New commands:
-- **Sonos:** `groups`, `group`, `leave`, `group-volume`, `sound`, `favorites`, `play-favorite`, `queue`, `line-in`, `tv`, `sleep`, `alarms`, `alarm-add`, `alarm-delete`, `settings`, `play-url`.
+- **Sonos:** `groups`, `group`, `leave`, `group-volume`, `sound`, `favorites`, `play-favorite`, `queue`, `line-in`, `tv`, `sleep`, `alarms`, `alarm-add`, `alarm-delete`, `settings`, `play-url`, and (phase 51) `playlists`, `play-playlist`, `enqueue`, `play-mode`, `crossfade`, `seek`.
 - **Linkplay:** `lp-*` (including `lp-presets`, `lp-eq`, `lp-rename`, `lp-play-url`).
 - **Google Cast:** `cast-play-url`.
 

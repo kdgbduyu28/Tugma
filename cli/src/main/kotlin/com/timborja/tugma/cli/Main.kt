@@ -14,6 +14,10 @@ import com.timborja.tugma.sonos.Recurrence
 import com.timborja.tugma.sonos.SonosAlarm
 import com.timborja.tugma.sonos.SonosClient
 import com.timborja.tugma.sonos.SonosSleepTimer
+import com.timborja.tugma.sonos.SonosFavorite
+import com.timborja.tugma.sonos.SonosTransportSettings
+import com.timborja.tugma.sonos.PlayMode
+import com.timborja.tugma.core.RepeatMode
 import com.timborja.tugma.sonos.SonosGroupPlanner
 import com.timborja.tugma.sonos.SonosGroupRules
 import com.timborja.tugma.sonos.SoundSetting
@@ -31,6 +35,7 @@ import com.timborja.tugma.upnp.OkHttpTransport
 import com.timborja.tugma.upnp.SoapCall
 import com.timborja.tugma.upnp.SoapClient
 import com.timborja.tugma.upnp.SsdpDiscoverer
+import com.timborja.tugma.upnp.StreamLinkResolver
 import com.timborja.tugma.cast.CastClient
 import com.timborja.tugma.cast.CastDevice
 import com.timborja.tugma.cast.CastPlayback
@@ -99,6 +104,12 @@ Writes (each one shows the exact SOAP and asks you to type "yes"):
   favorites <ip>                   list My Sonos favorites
   play-favorite <ip> <number|title>   play a favorite on <ip>'s group (containers replace the queue)
   queue <ip> [play N | remove N | clear]   the group's queue
+  playlists <ip>                   list Sonos playlists
+  play-playlist <ip> <number|title>   play a Sonos playlist (replaces the queue)
+  enqueue <ip> <favorite number|title> [--next]   add a favorite to the queue (at the end, or after the current track)
+  play-mode <ip> [normal|shuffle|repeat|repeat-one|shuffle-repeat|shuffle-repeat-one]   read or set shuffle/repeat
+  crossfade <ip> [on|off]          read or set crossfade
+  seek <ip> [m:ss | h:mm:ss]       show the position in the track, or jump to a time
   line-in <ip> <source-ip>         play <source-ip>'s line-in on <ip>'s group
   tv <bar-ip>                      switch a soundbar to its TV input
   play-url <ip> <url> [--title t] [--file]   play a radio stream (or with --file, an audio file) on <ip>'s group
@@ -201,6 +212,12 @@ private class Cli(
         "sound" -> sound(rest)
         "favorites" -> favorites(rest)
         "play-favorite" -> playFavorite(rest)
+        "playlists" -> { client.playlists(endpoint(rest, 0)).list().forEachIndexed { i, p -> println("${(i + 1).toString().padStart(2)}. ${p.title}") }; 0 }
+        "play-playlist" -> playFavorite(rest, playlists = true)
+        "enqueue" -> enqueue(rest)
+        "play-mode" -> playMode(rest)
+        "crossfade" -> crossfade(rest)
+        "seek" -> seek(rest)
         "sleep" -> sleep(rest)
         "settings" -> settings(rest)
         "lp-rename" -> { LinkplayExtras(linkplay, lp(rest, 0)).rename(rest.drop(1).joinToString(" ")); println("renamed"); 0 }
@@ -351,16 +368,82 @@ private class Cli(
         return 0
     }
 
-    private suspend fun playFavorite(rest: List<String>): Int {
+    private suspend fun playFavorite(rest: List<String>, playlists: Boolean = false): Int {
         val state = load(rest)
         val room = state.at(endpoint(rest, 0))
         val coord = state.coordinatorOf(room.uuid) ?: room
-        val favs = client.favorites(room.endpoint).list()
-        val key = rest.drop(1).joinToString(" ").ifBlank { throw IllegalArgumentException("missing favorite number or title") }
-        val f = key.toIntOrNull()?.let { favs.getOrNull(it - 1) } ?: favs.firstOrNull { it.title.equals(key, ignoreCase = true) }
-            ?: throw IllegalArgumentException("no favorite \"$key\" (run: favorites ${rest[0]})")
+        val f = pick(room.endpoint, rest.drop(1).joinToString(" "), playlists, rest[0])
         client.player(coord.endpoint, coord.uuid).play(f)
         println("Playing ${f.title} on ${coord.roomName}'s group")
+        return 0
+    }
+
+    /** A favorite (or Sonos playlist) by its 1-based number in the list, or by title. */
+    private suspend fun pick(any: Endpoint, key: String, playlists: Boolean, ip: String): SonosFavorite {
+        val what = if (playlists) "playlist" else "favorite"
+        require(key.isNotBlank()) { "missing $what number or title" }
+        val list = if (playlists) client.playlists(any).list() else client.favorites(any).list()
+        return key.toIntOrNull()?.let { list.getOrNull(it - 1) } ?: list.firstOrNull { it.title.equals(key, ignoreCase = true) }
+            ?: throw IllegalArgumentException("no $what \"$key\" (run: ${if (playlists) "playlists" else "favorites"} $ip)")
+    }
+
+    private suspend fun enqueue(rest: List<String>): Int {
+        val state = load(rest)
+        val room = state.at(endpoint(rest, 0))
+        val coord = state.coordinatorOf(room.uuid) ?: room
+        val f = pick(room.endpoint, rest.drop(1).joinToString(" "), playlists = false, ip = rest[0])
+        val next = "--next" in args.flags
+        val at = client.player(coord.endpoint, coord.uuid).enqueue(f, next)
+        println("Queued ${f.title}${at?.let { " at position $it" } ?: ""}")
+        return 0
+    }
+
+    private suspend fun transportSettings(rest: List<String>): SonosTransportSettings {
+        val state = load(rest)
+        val coord = state.coordinatorOf(state.at(endpoint(rest, 0)).uuid)!!
+        return client.transportSettings(coord.endpoint)
+    }
+
+    private suspend fun playMode(rest: List<String>): Int {
+        val t = transportSettings(rest)
+        rest.getOrNull(1)?.let { v ->
+            val mode = when (v.lowercase()) {
+                "normal", "off" -> PlayMode(false, RepeatMode.OFF)
+                "shuffle" -> PlayMode(true, RepeatMode.OFF)
+                "repeat" -> PlayMode(false, RepeatMode.ALL)
+                "repeat-one" -> PlayMode(false, RepeatMode.ONE)
+                "shuffle-repeat" -> PlayMode(true, RepeatMode.ALL)
+                "shuffle-repeat-one" -> PlayMode(true, RepeatMode.ONE)
+                else -> throw IllegalArgumentException("unknown play mode $v")
+            }
+            t.setPlayMode(mode)
+        }
+        val m = t.playMode()
+        println(m?.let { "shuffle ${if (it.shuffle) "on" else "off"}, repeat ${it.repeat.label.lowercase()} (${it.wire})" } ?: "play mode: unknown")
+        return 0
+    }
+
+    private suspend fun crossfade(rest: List<String>): Int {
+        val t = transportSettings(rest)
+        rest.getOrNull(1)?.let { v -> t.setCrossfade(when (v.lowercase()) { "on" -> true; "off" -> false; else -> throw IllegalArgumentException("use on or off") }) }
+        println("crossfade ${if (t.crossfade()) "on" else "off"}")
+        return 0
+    }
+
+    private suspend fun seek(rest: List<String>): Int {
+        val t = transportSettings(rest)
+        rest.getOrNull(1)?.let { v ->
+            val parts = v.split(':').map { it.toIntOrNull() ?: throw IllegalArgumentException("use m:ss or h:mm:ss") }
+            val seconds = when (parts.size) {
+                2 -> parts[0] * 60 + parts[1]
+                3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]
+                else -> throw IllegalArgumentException("use m:ss or h:mm:ss")
+            }
+            t.seek(seconds)
+        }
+        val p = t.position()
+        if (!p.seekable) println("track ${p.track ?: "-"}: a stream, no position") else
+            println("track ${p.track ?: "-"}: ${SonosTransportSettings.formatTime(p.elapsedSeconds ?: 0)} / ${SonosTransportSettings.formatTime(p.durationSeconds!!)}")
         return 0
     }
 
@@ -403,7 +486,10 @@ private class Cli(
         val url = rest.getOrNull(1) ?: throw IllegalArgumentException("missing <url>")
         val station = Station(args.options["--title"] ?: url.substringAfter("://").substringBefore('/'), url, live = "--file" !in args.flags)
         require(station.isValidUrl) { "url must start with http:// or https://" }
-        target.playUrl(station.url, station.name, station.live)
+        // Playlist files (.pls, .m3u…) are read from the internet; the fakes take any link.
+        val stream = if ("--demo" in args.flags) station.url.trim() else StreamLinkResolver(OkHttpTransport()).resolve(station.url)
+        if (stream != station.url.trim()) println("playlist -> $stream")
+        target.playUrl(stream, station.name, station.live)
         println("playing ${station.name}")
         return 0
     }

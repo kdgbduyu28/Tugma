@@ -20,6 +20,11 @@ data class SonosScene(
     val favorite: SceneFavorite? = null,
     /** Optional reminder: a notification at this time offers to apply the scene. */
     val reminder: SceneReminder? = null,
+    /**
+     * Volumes for other brands' speakers ("BRAND|id" → 0–100). Not part of the reviewed plan:
+     * the app sets them after it, like any volume change.
+     */
+    val otherVolumes: Map<String, Int> = emptyMap(),
 ) {
     val rooms: List<String> get() = listOf(leaderUuid) + memberUuids.filter { it != leaderUuid }
 }

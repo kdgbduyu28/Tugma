@@ -12,8 +12,9 @@ An unofficial Android controller that pairs speakers the official apps won't:
 - **Nicknames** for DLNA and Google Cast speakers (they have no rename command), stored on the phone and included in backups.
 - **Search** on the Speakers tab (shown once there are more than 8 speakers): matches name, model or address.
 - **Hide speakers** you don't use (a TV's DLNA renderer, say) from the Speakers list, from their speaker screen. "Show hidden" brings them back.
-- **Volume mixer**: every speaker's volume and mute on one screen, across brands (link at the bottom of the Speakers tab).
-- **Home-screen widget** for any one speaker: what's playing, play/pause, next and volume.
+- **Volume mixer**: every speaker's volume and mute on one screen, across brands (link at the bottom of the Speakers tab). "Mute all" mutes every speaker at once; "Unmute" restores only the ones it muted, so speakers you'd muted yourself stay muted.
+- **Home-screen widget** for any one speaker: what's playing (or paused/stopped, volume, muted), play/pause, next and volume. Tapping its text opens that speaker's screen.
+- **Speaker Quick Settings tile**: play/pause the widget's speaker from the notification shade, with what's playing as the subtitle. Pick the speaker with "Show on widget and tile" on its screen.
 - **Appearance** (About): system, light or dark theme, and wallpaper (Material You) colours on Android 12+.
 - **Backup and restore** (About → Backup): EQ profiles, saved links, Sonos scenes, speakers added by IP and hidden speakers go into one JSON file. Restoring replaces only the sections the file contains.
 - **Speaker settings**:
@@ -22,8 +23,12 @@ An unofficial Android controller that pairs speakers the official apps won't:
   - CLI: `settings`, `lp-rename`.
 - **Play a link on any brand**: save internet radio or audio links and play them on Sonos, DLNA, Linkplay or Google Cast.
   - Sonos turns `http` radio into `x-rincon-mp3radio:`. DLNA uses `SetAVTransportURI` with a titled DIDL. Linkplay uses `setPlayerCmd:play:`.
-  - Cast launches the Default Media Receiver (`CC1AD845`) and `LOAD`s the link.
+  - Cast launches the Default Media Receiver (`CC1AD845`), waits for it to come up, and `LOAD`s the link with a content type picked from the extension (HLS and DASH included). A failed load says why in plain words.
+  - Playlist links (`.pls`, `.m3u`, `.xspf`, `.asx`) are read on the phone and the first stream in them is played, since Cast and most DLNA renderers can't open playlist files. This is the only time Tugma fetches something from the internet, and only for links with those extensions.
   - CLI: `play-url`, `cast-play-url`, `lp-play-url`.
+- **Seek bar for every brand**: under Now playing, for tracks that have a length (radio has none). UPnP/DLNA and Sonos use `GetPositionInfo` and `Seek REL_TIME`; Linkplay uses `curpos`/`totlen` and `setPlayerCmd:seek:`; Cast uses `MEDIA_STATUS` and `SEEK`.
+- **Shuffle and repeat for DLNA and Linkplay**: under Now playing, once the speaker reports a play mode. DLNA uses the standard `GetTransportSettings` / `SetPlayMode` (no shuffle-with-repeat, as the standard has no name for it); Linkplay uses `loop` / `setPlayerCmd:loopmode:` with python-linkplay's numbering (experimental). Sonos keeps its own controls below.
+- **Sonos playback modes and playlists**: shuffle, repeat (all or one) and crossfade (`Get/SetTransportSettings`, `SetPlayMode`, `Get/SetCrossfadeMode`), Sonos playlists from the Sonos app (`SQ:`), and "Play next" / "Add to end of queue" for any favorite or playlist that isn't a live stream (`AddURIToQueue` with `EnqueueAsNext`). Shuffle and repeat only work while the group plays from its queue; Tugma says so instead of failing silently. CLI: `playlists`, `play-playlist`, `enqueue`, `play-mode`, `crossfade`, `seek`.
 - **Sonos queue and inputs**: see the group queue, play from any track, remove tracks or clear it (`Q:0`, `Seek TRACK_NR`); play any room's line-in (`x-rincon-stream:`) or switch a soundbar to TV (`x-sonos-htastream:<uuid>:spdif`). CLI: `queue`, `line-in`, `tv`.
 - **Volume buttons in the app**: while a speaker's screen is open, the phone's volume buttons step that speaker's volume. If it doesn't report a volume, they change the phone's as usual.
 - **Speaker remote in the notification shade**: any speaker's play/pause/next/previous on the lock screen, and the phone's volume buttons change that speaker's volume (remote MediaSession).
@@ -33,9 +38,9 @@ An unofficial Android controller that pairs speakers the official apps won't:
 - **Now playing on room cards**: each Sonos room shows what its group is playing.
   - Live from AVTransport events on each group coordinator where the speakers allow it.
   - Otherwise a 30 s poll using only `GetTransportInfo` and `GetPositionInfo`; it slows to 2 minutes while events flow.
-- **Pause all / Resume** (Speakers tab): pauses every Sonos group that's playing; Resume restarts just those groups.
+- **Pause all / Resume** (Speakers tab): pauses every Sonos group and every DLNA, Linkplay and Cast speaker that's playing; Resume restarts just those. Without Sonos speakers, the buttons sit at the bottom of the list.
 - **Scene reminders**: give a scene a time and days. At that time a notification offers to apply it; nothing changes until you tap Apply. Reminders survive reboots.
-- **Sonos scenes**: save which rooms play together, their volumes and an optional favorite, then apply it in one tap. Applying builds one plan (leaves, joins, `SetVolume`, then the favorite) that you review before it's sent.
+- **Sonos scenes**: save which rooms play together, their volumes and an optional favorite, then apply it in one tap. Applying builds one plan (leaves, joins, `SetVolume`, then the favorite) that you review before it's sent. A scene can also set DLNA, Linkplay and Cast speakers' volumes; those are sent after the Sonos plan, without review, like any volume change.
 - **Sonos multiroom groups and sound settings**: group rooms (or every room), group volume and mute, plus bass, treble, loudness and the soundbar's night sound, speech enhancement, sub, surround and height levels.
 - **Volume, mute and play/pause for any brand's Wi-Fi speaker** that exposes a standard UPnP/DLNA MediaRenderer, plus the same controls for Sonos.
 - **Google Cast speakers, displays and groups** (Chromecast built-in, from any maker): volume, mute and playback. Groups and pairs made in Google Home are shown read-only.
@@ -43,7 +48,7 @@ An unofficial Android controller that pairs speakers the official apps won't:
 - **Soundcore headphone settings (experimental)**, ported from [OpenSCQ30](https://github.com/Oppzippy/OpenSCQ30): battery, noise cancelling / transparency, and the headphones' own EQ, for the models whose protocol is ported.
 - **Linkplay speakers** (Arylic, WiiM, Audio Pro and other Linkplay-platform brands): volume/playback, multiroom groups across models, and experimental left/right stereo pairs.
 - **Protocol lab** for devices Tugma doesn't know yet (SoundPEATS, Moondrop…): raw RFCOMM, BLE GATT and USB HID explorers, plus `btsnoop_hci.log` import with automatic framing analysis.
-- **Redmi Buds settings (experimental)**, ported from [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge), including its challenge-response handshake: battery, noise control and strength, EQ presets and custom curve, toggles, and Find earbuds.
+- **Redmi Buds settings (experimental)**, ported from [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge), including its challenge-response handshake: battery, noise control and strength, EQ presets and custom curve, toggles, Find earbuds, and touch-control remapping.
 
 Tugma talks to speakers directly over the local network (UPnP/SOAP on port 1400). It needs no cloud account.
 
@@ -277,7 +282,7 @@ Ported from Gadgetbridge's `redmibuds` support. **Not yet tested on real earbuds
 | Redmi Buds 6 Active / 8 Active | Battery, EQ presets (8 Active: + custom), Find earbuds, toggles |
 | Redmi Buds 4 Active | Battery, firmware |
 
-**Not ported yet:** touch-gesture remapping. It's in Gadgetbridge and planned.
+**Touch controls:** single, double and triple tap and long press, per earbud, on the 3 Pro, 5 Pro, 6, 6 Pro, 6 Lite, 6 Active and 8 Active, with the action lists Gadgetbridge offers for each model. Where a long press is set to noise control, you can also pick which modes it cycles through. The byte layout comes from Gadgetbridge's `encodeSetGesture` and its gesture enums, and is checked against the fake in the tests.
 
 **Licence:** the files under `bt-core/.../redmibuds/` stay under **AGPL-3.0-or-later**, like Gadgetbridge's. They're combined with the rest of Tugma (GPL-3.0-or-later) under section 13 of both licences.
 

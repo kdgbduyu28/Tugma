@@ -14,13 +14,17 @@ import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -31,6 +35,7 @@ import androidx.lifecycle.viewModelScope
 import com.timborja.tugma.AppContainer
 import com.timborja.tugma.core.Brand
 import com.timborja.tugma.core.Capability
+import com.timborja.tugma.core.MuteAll
 import com.timborja.tugma.core.SpeakerSummary
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -81,7 +86,34 @@ class VolumeMixerViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch { runCatching { control.setVolume(v) } }
     }
 
+    /** Keys that "Mute all" muted, so "Unmute" restores only those. */
+    val mutedByAll = mutableStateListOf<String>()
+    var message by mutableStateOf<String?>(null)
+
+    fun muteAll(rows: List<MixerRow>) {
+        val targets = rows.filter { volumes[it.key] != null }
+            .mapNotNull { r -> c.source(r.brand)?.playback(r.speaker.id)?.let { r.key to it } }.toMap()
+        viewModelScope.launch {
+            val done = MuteAll.mute(targets) { muted[it] == true }
+            done.forEach { muted[it] = true }
+            mutedByAll.clear(); mutedByAll.addAll(done)
+            message = if (done.isEmpty()) "Nothing to mute" else "Muted ${done.size} ${if (done.size == 1) "speaker" else "speakers"}"
+        }
+    }
+
+    fun unmuteAll(rows: List<MixerRow>) {
+        val byKey = rows.associateBy { it.key }
+        val keys = mutedByAll.toList()
+        viewModelScope.launch {
+            val done = MuteAll.unmute(keys) { k -> byKey[k]?.let { r -> c.source(r.brand)?.playback(r.speaker.id) } }
+            done.forEach { muted[it] = false }
+            mutedByAll.clear()
+            message = "Unmuted ${done.size} of ${keys.size}"
+        }
+    }
+
     fun toggleMute(r: MixerRow) {
+        mutedByAll.remove(r.key)
         val m = !(muted[r.key] ?: false)
         muted[r.key] = m
         val control = c.source(r.brand)?.playback(r.speaker.id) ?: return
@@ -105,6 +137,11 @@ fun VolumeMixerScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (rows.isEmpty()) Text("No speakers with volume control yet. Scan on the Speakers tab first.")
+            vm.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (rows.size > 1) {
+                if (vm.mutedByAll.isEmpty()) OutlinedButton(onClick = { vm.muteAll(rows) }) { Text("Mute all") }
+                else OutlinedButton(onClick = { vm.unmuteAll(rows) }) { Text("Unmute the ${vm.mutedByAll.size} muted by Mute all") }
+            }
             rows.forEach { r ->
                 val mx = vm.max[r.key] ?: 100
                 val v = vm.dragging[r.key] ?: vm.volumes[r.key]?.toFloat()
